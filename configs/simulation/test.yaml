@@ -2,7 +2,7 @@
 # 使用此文件来指定仿真的各种参数
 
 # Data save path
-path: '/home/xiaoxinyu/data/test'
+path: '/gpfs/share/home/2001110035/data/test'
 
 seed: 9071909                                         # Random seed
 batch: 2                                              # Number of signals

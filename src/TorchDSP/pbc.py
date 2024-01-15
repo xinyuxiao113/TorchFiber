@@ -626,12 +626,12 @@ if __name__ == '__main__':
     from src.TorchSimulation.receiver import  BER 
     from src.TorchDSP.core import TorchSignal,TorchTime
 
-    device = 'cpu'
+    device = 'cuda:0'
 
     train_y, train_x,train_t = pickle.load(open('data/train_data_afterCDCDSP.pkl', 'rb'))
     k = get_k_batch(1, 20, train_t)
     train_signal = TorchSignal(train_y[k], TorchTime(0,0,1)).to(device)
-    train_z = train_t[k]
+    train_z = train_t[k].to(device)
 
     print(train_y.shape)
     print(train_x.shape)
@@ -644,6 +644,7 @@ if __name__ == '__main__':
     #net = SymFoPBC(rho=1.0, L=50)
     #net = SymFoPBCNN(rho=1.0, L=50, hidden_size=[2, 10], dropout=0.5, activation='relu')
     net = SymHoPBC(rho=1.0, L=50, steps=2)
+    net = net.to(device)
     signal_out = net(signal, train_z)
 
     print(signal_out.val.shape)

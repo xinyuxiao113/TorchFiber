@@ -5,3 +5,5 @@ outputs/*
 _outputs/*
 slurms
 __pycache__/
+.vscode/
+configs/
