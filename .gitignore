@@ -1,0 +1,7 @@
+data/*
+models/*
+_models/*
+outputs/*
+_outputs/*
+slurms
+__pycache__/
