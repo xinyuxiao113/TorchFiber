@@ -7,3 +7,5 @@ pip install flax
 pip install jaxopt==0.6
 pip install pandas
 pip install tqdm
+pip install tensorboard
+pip install cloudpickle

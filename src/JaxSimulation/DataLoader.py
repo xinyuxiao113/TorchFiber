@@ -5,10 +5,6 @@ from .utils import HiddenPrints
 from .receiver import get_dataset, merge_dataset, split_dataset
 from .models import CDC_transform, DBP_transform
 
-# 使用os检查是否存在path
-path_ = '/home/xiaoxinyu/data'                                   # data path on server
-if not os.path.exists(path_): path_ = '/Users/xiaoxinyu/Desktop/data'     # data path on server
-if not os.path.exists(path_): raise(ValueError)                  # 请设置正确的数据路径
 
 
 class DataLoader():
@@ -45,15 +41,13 @@ class DataLoader():
 
 
 
-def Generate_Data(mark='A_batch2', Nch=[1], Rs=[80], SF=1.1, mode=1, batch_id=[0], power=[-8,-7,-6,-5,-4,-3,-2,-1,0,1,2,3,4,5,6], path=None, merge=False, transform=None, dbpsteps=None):
+def Generate_Data(path='~/data/test', Nch=[1], Rs=[80], batch_id=[0], power=[-8,-7,-6,-5,-4,-3,-2,-1,0,1,2,3,4,5,6], merge=False, transform=None, dbpsteps=None):
     '''
         transform: None, CDC, DBP
         Nch: list or int.
         Rs: list or int.
         power: list of list or list of int.
     '''
-    if path==None:
-        path = path_ + f'/{mark}_bits4e5_SF{SF}_mode{mode}'
 
     # 获取函数的所有局部变量
     variables = locals()

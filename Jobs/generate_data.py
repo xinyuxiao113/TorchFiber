@@ -9,18 +9,16 @@ import pickle
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--file',        help='data file index. Final_batch2 or batch2', type=str, default='batch2')
-parser.add_argument('--save_path',   help='save path', type=str, default='../data/train_data_ood.pkl')
-parser.add_argument('--Nch',         help='Choose number of channels',      type=int,   nargs='+', default=[2*i-1 for i in range(1, 12)])
-parser.add_argument('--Rs',          help='Choose single channel symbol rate. [Hz]',  type=int,   nargs='+', default=[i*10e9 for i in range(1, 20)])
+parser.add_argument('--file',        help='data file index. Final_batch2 or batch2', type=str, default='/gpfs/share/home/2001110035/data/test')
+parser.add_argument('--save_path',   help='save path', type=str, default='../data/t0.pkl')
+parser.add_argument('--Nch',         help='Choose number of channels',      type=int,   nargs='+', default=[1])
+parser.add_argument('--Rs',          help='Choose single channel symbol rate. [Hz]',  type=int,   nargs='+', default=[10])
 parser.add_argument('--Pch',         help='Choose single channel launch power. [dBm]',  type=int,   nargs='+', default=[i for i in range(-8, 9)])
-parser.add_argument('--SF',          help='Spacing factor > 1.1. ', type=float, default=1.2)
-parser.add_argument('--Nmodes',      help='Choose the polarization modes. 1 or 2',      type=int,   default=1)
-parser.add_argument('--batch_id',    help='Choose the batch id. 0 or 1',        type=int,   default=1)
+parser.add_argument('--batch_id',    help='Choose the batch id. 0 or 1',        type=int,   default=0)
 args = parser.parse_args()
 
 
-data, info = DL.Generate_Data(args.file, Nch=args.Nch, Rs=args.Rs,SF=args.SF,mode=args.Nmodes,power=args.Pch, batch_id=[args.batch_id], merge=True)
+data, info = DL.Generate_Data(args.file, Nch=args.Nch, Rs=args.Rs, power=args.Pch, batch_id=[args.batch_id], merge=True)
 pickle.dump((data, info), open(args.save_path, 'wb'))
 
 
