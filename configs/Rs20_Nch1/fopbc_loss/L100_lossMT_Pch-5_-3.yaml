@@ -1,0 +1,33 @@
+# config.yaml
+train_path: "data/train_data_afterCDCDSP.pkl"
+test_path: "data/test_data_afterCDCDSP.pkl"
+Rs: 20   # train symbol rate
+Nch: 1   # train Nch
+Pch: [-5, -4, -3] # train Pch
+
+# model setting
+model_name: "SymFoPBC"
+model info:
+  L: 100
+  rho: 1
+  index_type: "A"
+
+
+# training details
+epochs: 200
+save_interval: 10
+iters_per_batch: 1
+batchs: 23                  # number of batch
+tbpl: 4000                  # batch size
+train_discard: 2000
+ber_discard: 10000
+loss_type: "MT"
+opt: "Adam"
+opt info:
+  lr: 0.00001 
+weight_decay: 0
+lamb: 0
+device: "cuda:0"
+
+tensorboard_path: "_outputs/log_tensorboard/Rs20_Nch1/SymFoPBC/L100_rho1_opt(Adam_lr1e-5)_loss(MT)_Pch-5_-3"
+model_path: "_models/Rs20_Nch1/SymFoPBC/L100_rho1_opt(Adam_lr1e-5)_loss(MT)_Pch-5_-3"

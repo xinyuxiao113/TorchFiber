@@ -1,0 +1,31 @@
+# 这是仿真光纤传输的配置文件
+# 使用此文件来指定仿真的各种参数
+
+# Data save path
+path: '/home/xiaoxinyu/data/test'
+
+seed: 9071909                                         # Random seed
+batch: 2                                              # Number of signals
+Nbits: 40000                                          # Number of bits per channel per mode.
+Nmodes: 2                                             # Polarization modes. 1 or 2.
+PMD: False                                            # Open PMD noise or not.
+precision: 'float64'                                  # Simulation precision. 'float32' or 'float64'
+Nch: [1]                      # Number of channels.        
+Rs: [10]   # [Gbaud]  Symbol rate per channel per mode.
+Pch: [-8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8]        # [dBm]  Average power per channel.
+SF: 1.2                                               # Spacing factor = channel space / symbol rate
+
+
+# Gloabal parameters
+M: 16                    # QAM format.
+Ltotal: 2000             # Total Length. [km]
+Lspan: 80                # Length per span. [km]
+alpha: 0.2               # Attenuation parameter. [dB/km]
+D: 16.5                  # Dispersion parameter.  [ps/nm/km]
+Dpmd: 3                  # PMD parameter. [ps/sqrt(km)]
+Lcorr: 0.1               # Fiber Correlation length. [km]
+Fc: 193414489032258.06   # Central frequency [Hz] (计算得出 299792458 / 1550e-9)
+gamma: 1.6567            # Nonlinear parameter. [/W/km]
+amp: 'edfa'              # Amplifier type. 'edfa', 'ideal', or None. [default:'edfa']
+NF: 4.5                  # EDFA Noise Figure. [dB]
+

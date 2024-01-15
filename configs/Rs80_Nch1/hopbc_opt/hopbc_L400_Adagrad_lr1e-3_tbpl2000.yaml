@@ -1,0 +1,35 @@
+# config.yaml
+train_path: "data/train_data_afterCDCDSP.pkl"
+test_path: "data/test_data_afterCDCDSP.pkl"
+Rs: 80   # train symbol rate
+Nch: 1   # train Nch
+
+# model setting
+model_name: "SymHoPBC"
+model info:
+  L: 400
+  rho: 1
+  steps: 2
+
+
+
+# training details
+epochs: 200
+save_interval: 10
+iters_per_batch: 1
+batchs: 46                  # number of batch
+tbpl: 2000                  # batch size
+train_discard: 2000
+ber_discard: 10000
+loss_type: "MT"
+lamb: 0
+device: "cuda:0"
+
+opt: "Adagrad"            # "SGD", "Adagrad", "RMSprop", "AdamW", "Adamax", "ASGD", "SparseAdam"
+opt info:
+  lr: 0.001
+  weight_decay: 0
+
+
+tensorboard_path: "_outputs/log_tensorboard/Rs80_Nch1/SymHoPBC/L400_rho1_steps2_Adagrad_lr1e-3_tbpl2000"
+model_path: "_models/Rs80_Nch1/SymHoPBC/L400_rho1_steps2_Adagrad_lr1e-3_tbpl2000"
