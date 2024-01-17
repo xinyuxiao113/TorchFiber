@@ -16,9 +16,9 @@ module add anaconda           # 载入 anaconda 模块
 source ~/.bashrc
 conda activate fiber
 
-python -m Jobs.pbc_train --config configs/Rs20_Nch1/hopbc_L300/L300_steps2_adagrad1e-4_Pch-4.yaml
-python -m Jobs.pbc_train --config configs/Rs20_Nch1/hopbc_L300/L300_steps2_adagrad1e-4_Pch-3.yaml
-python -m Jobs.pbc_train --config configs/Rs20_Nch1/hopbc_L300/L300_steps2_adagrad1e-4_Pch-5.yaml
+
+python -m Jobs.pbc_train --config configs/Rs20_Nch1/fopbc_trainpower/L400_lossMT_Pch-8_6.yaml
+
 
 # python -m Jobs.pbc_train --config configs/Rs40/fopbc_loss/fopbc_L200_Adam_lr1e-5_lossMean.yaml
 # python -m Jobs.pbc_train --config configs/Rs40/fopbc_opt/fopbc_L200_SGD_lr5e-6_mmt0.9.yaml
