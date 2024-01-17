@@ -1,7 +1,7 @@
 import torch.nn as nn, torch, numpy as np, torch, matplotlib.pyplot as plt
 from typing import Union, List, Tuple, Optional
 from .core import TorchSignal, TorchTime
-from .layers import MLP, ComplexLinear, complex_weight_composition
+from .layers import MLP, ComplexLinear, complex_weight_composition, ComplexConv1d
 
 
 class BasePBC(nn.Module):
@@ -605,6 +605,60 @@ class SymHoPBC(nn.Module):
         return signal
 
 
+class ConvPBC(nn.Module):
+
+    def __init__(self, Nmodes=1, xpm_size=101, fwm_heads=16):
+        super().__init__()
+        self.Nmodes = Nmodes
+        assert xpm_size % 2 == 1
+        self.xpm_size = xpm_size
+        self.fwm_size = xpm_size
+        self.fwm_heads = fwm_heads
+        self.overlaps = self.xpm_size - 1
+        self.xpm_conv = nn.Conv1d(self.Nmodes, self.Nmodes, self.xpm_size)      # real convolution
+        self.fwm_conv_m = ComplexConv1d(1, self.fwm_heads, self.fwm_size)   # complex convolution
+        self.fwm_conv_n = ComplexConv1d(1, self.fwm_heads, self.fwm_size)   # complex convolution
+        self.fwm_conv_k = ComplexConv1d(1, self.fwm_heads, self.fwm_size)   # complex convolution
+        
+    def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None) -> TorchSignal:
+        P = torch.tensor(1) if task_info == None else 10**(task_info[:,0]/10)/signal.val.shape[-1]   # [batch] or ()
+        P = P.to(signal.val.device)
+        x = signal.val.transpose(1,2)  # x [B, M, L]
+        phi = self.xpm_conv(torch.abs(x)**2)      # [B, M, L - xpm_size + 1]
+        x_ = x.view(-1, x.shape[-1]).unsqueeze(1) # [B*M, 1, L]
+        Am = self.fwm_conv_m(x_).view(x.shape[0], x.shape[1], self.fwm_heads, -1)       # [B, M, heads, L - fwm_size + 1]
+        An = self.fwm_conv_n(x_).view(x.shape[0], x.shape[1], self.fwm_heads, -1)       # [B, M, heads, L - fwm_size + 1]
+        Ak = self.fwm_conv_k(x_).view(x.shape[0], x.shape[1], self.fwm_heads, -1)       # [B, M, heads, L - fwm_size + 1]
+        S = torch.sum(Am*Ak.conj(), dim=1)                                              # [B, heads, L - fwm_size + 1]
+        E = x[:,:, self.xpm_size//2:-(self.xpm_size//2)]*torch.exp(1j*phi) + torch.sum(An*S.unsqueeze(1), dim=2)  # [B, M, L - xpm_size + 1]
+        return  TorchSignal(val=E.transpose(1,2), t=TorchTime(signal.t.start + (self.xpm_size//2), signal.t.stop - (self.xpm_size//2), signal.t.sps))
+
+
+class HoConvPBC(nn.Module):
+
+    def __init__(self, steps=2, Nmodes=1, xpm_size=101, fwm_heads=16):
+        '''
+        L propto Rs^2
+        '''
+        super(HoConvPBC, self).__init__()
+        self.Nmodes = Nmodes 
+        self.xpm_size = xpm_size 
+        self.fwm_heads = fwm_heads
+        self.steps = steps
+        self.overlaps = (self.xpm_size - 1) * steps
+        self.ConvPBC_steps = nn.ModuleList([ConvPBC(Nmodes, xpm_size, fwm_heads) for i in range(steps)])
+
+    def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None):
+        '''
+        E: [batch, L, Nmodes] or [L, Nmodes]
+        task_info: P,Fi,Fs,Nch 
+        O_{b,k,i} = sum_{m,n} (E_{b, k+n, i} E_{b, k+m+n, i}^* +  E_{b, k+n, -i} E_{b, k+m+n, -i}^*) E_{b, k+m, i}
+        '''
+        for i in range(self.steps):
+            signal = self.ConvPBC_steps[i](signal, task_info)
+        return signal
+
+
 models = {
             'FoPBC': FoPBC,
             'SoPBC': SoPBC,
@@ -614,6 +668,7 @@ models = {
             'SymFoPBCNN': SymFoPBCNN,
             'SymHoPBC': SymHoPBC
         }  
+
 
 
     
@@ -626,7 +681,7 @@ if __name__ == '__main__':
     from src.TorchSimulation.receiver import  BER 
     from src.TorchDSP.core import TorchSignal,TorchTime
 
-    device = 'cuda:0'
+    device = 'cpu'
 
     train_y, train_x,train_t = pickle.load(open('data/train_data_afterCDCDSP.pkl', 'rb'))
     k = get_k_batch(1, 20, train_t)
@@ -643,11 +698,12 @@ if __name__ == '__main__':
     #net = FoPBCNN(rho=1.0, L=50, hidden_size=[2, 10], dropout=0.5, activation='relu')
     #net = SymFoPBC(rho=1.0, L=50)
     #net = SymFoPBCNN(rho=1.0, L=50, hidden_size=[2, 10], dropout=0.5, activation='relu')
-    net = SymHoPBC(rho=1.0, L=50, steps=2)
+    #net = SymHoPBC(rho=1.0, L=50, steps=2)
+    # net = ConvPBC()
+    net = HoConvPBC()
     net = net.to(device)
     signal_out = net(signal, train_z)
 
     print(signal_out.val.shape)
-
 
 
