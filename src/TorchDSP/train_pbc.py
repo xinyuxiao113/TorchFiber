@@ -86,9 +86,9 @@ def train_model(config: dict):
     # define optimizer
     if config['opt'] in optimizers.keys(): 
         if 'opt info' in config.keys():
-            optimizer = optimizers[config['opt']](net.parameters(), **config['opt info'])
+            optimizer = optimizers[config['opt']](filter(lambda p: p.requires_grad, net.parameters()), **config['opt info'])
         else:
-            optimizer = optimizers[config['opt']](net.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
+            optimizer = optimizers[config['opt']](filter(lambda p: p.requires_grad, net.parameters()), lr=config['lr'], weight_decay=config['weight_decay'])
     else: raise ValueError('optimizer not found')
 
     

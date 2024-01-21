@@ -248,7 +248,7 @@ class SoPBC(nn.Module):
         overlaps: int. 
         C_real, C_imag: torch.nn.Parameter. 
     '''
-    def __init__(self, rho=1.0, L=50, Lk=10, rho1=None, L1=None, index_type='A'):
+    def __init__(self, rho=1.0, L=50, Lk=10, rho1=None, L1=None, index_type='A', fo_type='FoPBC', fo_init=None):
         '''
         L propto Rs^2
         '''
@@ -260,10 +260,23 @@ class SoPBC(nn.Module):
         self.Lk = Lk
         assert self.L <= self.L1, 'L should be less than L1'
 
+        self.fo_type = fo_type
         self.index_type = index_type
         self.index = self.get_index()
         self.overlaps = self.L1
-        self.pbc = FoPBC(self.rho1, self.L1)
+        if self.fo_type=='FoPBC':
+            self.pbc = FoPBC(self.rho1, self.L1)
+        elif self.fo_type == 'SymFoPBC':
+            self.pbc = SymFoPBC(self.rho1, self.L1, self.index_type)
+        else:
+            raise ValueError
+
+        if fo_init != None:
+            dic = torch.load(fo_init)
+            self.pbc.load_state_dict(dic['model'])
+            for param in self.pbc.parameters():
+                param.requires_grad = False
+
         self.nn1 = ComplexLinear(len(self.index), 1, bias=False)
         self.nn2 = ComplexLinear(len(self.index), 1, bias=False)
         nn.init.zeros_(self.nn1.real.weight)
@@ -508,7 +521,7 @@ class SymFoPBC(SymPBC):
 
 class SymFoPBCNN(SymPBC):
 
-    def __init__(self, rho=1.0, L=50, index_type='A', hidden_size=[2, 10], dropout=0.5, activation='leaky_relu', use_bias=True, init_type=0):
+    def __init__(self, rho=1.0, L=50, index_type='A', hidden_size=[2, 10], dropout=0.5, activation='leaky_relu', use_bias=True, init_type=0, fo_path=None, fo_fix=False):
         '''
         L propto Rs^2
         '''
@@ -517,13 +530,11 @@ class SymFoPBCNN(SymPBC):
         self.dropout = dropout
         self.activation = activation
         self.use_bias = use_bias
-        # Activation functions mapping
         activations = {
             'relu': nn.ReLU(),
             'sigmoid': nn.Sigmoid(),
             'tanh': nn.Tanh(),
             'leaky_relu': nn.LeakyReLU(),
-            # Add more activation functions if needed
         }
         act = activations.get(activation, nn.ReLU())  # Default to ReLU if not found
 
@@ -547,10 +558,18 @@ class SymFoPBCNN(SymPBC):
         elif init_type == 3:
             pass
         elif init_type == 4:
-            dic = torch.load('/home/xiaoxinyu/TorchFiber/_models/SymFoPBC_L200_rho1_index_typeA_Nch1_Rs40_opt(Adam_lr1e-5)_loss(Mean)_Pch-1.ckpt200', map_location='cpu')
+            path = '/home/xiaoxinyu/TorchFiber/_models/SymFoPBC_L200_rho1_index_typeA_Nch1_Rs40_opt(Adam_lr1e-5)_loss(Mean)_Pch-1.ckpt200' if fo_path==None else fo_path
+            dic = torch.load(path, map_location='cpu')
             weight = complex_weight_composition(dic['model']['nn.real.weight'].data, dic['model']['nn.imag.weight'].data)
             self.nn[0].weight.data = weight
             if use_bias: nn.init.zeros_(self.nn[0].bias)         # type: ignore
+
+            if fo_fix == True:
+                for param in self.nn[0].parameters():
+                    param.requires_grad = False
+            else:
+                pass
+                 
         else:
             raise ValueError('init_type should be 0, 1, 2, 3')
 
@@ -615,10 +634,13 @@ class ConvPBC(nn.Module):
         self.fwm_size = xpm_size
         self.fwm_heads = fwm_heads
         self.overlaps = self.xpm_size - 1
-        self.xpm_conv = nn.Conv1d(self.Nmodes, self.Nmodes, self.xpm_size)      # real convolution
-        self.fwm_conv_m = ComplexConv1d(1, self.fwm_heads, self.fwm_size)   # complex convolution
-        self.fwm_conv_n = ComplexConv1d(1, self.fwm_heads, self.fwm_size)   # complex convolution
-        self.fwm_conv_k = ComplexConv1d(1, self.fwm_heads, self.fwm_size)   # complex convolution
+        self.xpm_conv = nn.Conv1d(self.Nmodes, self.Nmodes, self.xpm_size, bias=False)      # real convolution
+        nn.init.zeros_(self.xpm_conv.weight)
+        self.fwm_conv_m = ComplexConv1d(1, self.fwm_heads, self.fwm_size,bias=False)   # complex convolution
+        self.fwm_conv_n = ComplexConv1d(1, self.fwm_heads, self.fwm_size,bias=False)   # complex convolution
+        self.fwm_conv_k = ComplexConv1d(1, self.fwm_heads, self.fwm_size,bias=False)   # complex convolution
+
+
         
     def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None) -> TorchSignal:
         P = torch.tensor(1) if task_info == None else 10**(task_info[:,0]/10)/signal.val.shape[-1]   # [batch] or ()
@@ -666,7 +688,9 @@ models = {
             'FoPBCNN': FoPBCNN,
             'SymFoPBC': SymFoPBC,
             'SymFoPBCNN': SymFoPBCNN,
-            'SymHoPBC': SymHoPBC
+            'SymHoPBC': SymHoPBC,
+            'ConvPBC': ConvPBC,
+            'HoConvPBC': HoConvPBC
         }  
 
 
