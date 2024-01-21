@@ -2,7 +2,12 @@ import torch, torch.nn as nn, numpy as np, matplotlib.pyplot as plt
 import torch.nn.functional as F
 import torch.nn.init as init
 
+class Id(nn.Module):
+    def __init__(self):
+        super(Id, self).__init__()
 
+    def forward(self, x):
+        return x
 
 
 class MLP(nn.Module):

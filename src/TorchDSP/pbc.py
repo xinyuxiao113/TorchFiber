@@ -1,7 +1,7 @@
 import torch.nn as nn, torch, numpy as np, torch, matplotlib.pyplot as plt
 from typing import Union, List, Tuple, Optional
 from .core import TorchSignal, TorchTime
-from .layers import MLP, ComplexLinear, complex_weight_composition, ComplexConv1d
+from .layers import MLP, ComplexLinear, complex_weight_composition, ComplexConv1d, Id
 
 
 class BasePBC(nn.Module):
@@ -535,6 +535,7 @@ class SymFoPBCNN(SymPBC):
             'sigmoid': nn.Sigmoid(),
             'tanh': nn.Tanh(),
             'leaky_relu': nn.LeakyReLU(),
+            'id': Id(),
         }
         act = activations.get(activation, nn.ReLU())  # Default to ReLU if not found
 
