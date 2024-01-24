@@ -61,11 +61,14 @@ def train_model(config: dict):
     if 'seed' in config.keys():
         torch.manual_seed(config['seed'])
 
+    # create path
     writer = SummaryWriter(config['tensorboard_path'])
+    folder_path = os.path.dirname(config['model_path'])
+    if not os.path.exists(folder_path): os.makedirs(folder_path)
 
+    # load history ckpt
     epoch1 = config['epochs']
     if 'ckpt_path' in config.keys(): config = torch.load(config['ckpt_path'])
-
 
     # data loading
     device = config['device']
@@ -73,13 +76,10 @@ def train_model(config: dict):
     train_signal, train_truth, train_z = get_signals(config['train_path'], config['Nch'], config['Rs'], Pch=Pch,  device='cpu')
     test_signal, test_truth, test_z = get_signals(config['test_path'], config['Nch'], config['Rs'], device='cpu')
 
-    # define model
+    # define model and load model
     model = models[config['model_name']]
     net = model(**config['model info'])
-
-    
     if 'model' in config.keys(): net.load_state_dict(config['model'])
-
     net = net.to(device)
     net.train()
 
@@ -90,10 +90,9 @@ def train_model(config: dict):
         else:
             optimizer = optimizers[config['opt']](filter(lambda p: p.requires_grad, net.parameters()), lr=config['lr'], weight_decay=config['weight_decay'])
     else: raise ValueError('optimizer not found')
-
-    
     if 'optimizer' in config.keys(): optimizer.load_state_dict(config['optimizer'])
 
+    # define batch size
     Ls = net.overlaps + config['tbpl']
     train_loss_list = []
     val_loss_list = []
@@ -103,7 +102,7 @@ def train_model(config: dict):
     elif config['loss_type'] == 'Mean': loss_fn = MeanLoss
     elif config['loss_type'] == 'MSE': loss_fn = MSE
     else: raise ValueError('loss_type should be MT or Mean')
-
+    
     epoch0 = config['train epoch'] + 1 if 'train epoch' in config.keys() else 1
 
     for epoch in range(epoch0, epoch1 + 1):

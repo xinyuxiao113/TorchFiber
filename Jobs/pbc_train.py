@@ -12,4 +12,7 @@ _args = parser.parse_args()
 with open(_args.config, 'r') as file:
     args = yaml.safe_load(file)
 
+if 'model_path' not in args.keys(): args['model_path'] = _args.config.replace('configs', '_models').replace('.yaml', '')
+if 'tensorboard_path' not in args.keys(): args['tensorboard_path'] = _args.config.replace('configs', '_outputs/log_tensorboard').replace('.yaml', '')
+
 train_model(args)

@@ -1,7 +1,7 @@
 import torch.nn as nn, torch, numpy as np, torch, matplotlib.pyplot as plt
 from typing import Union, List, Tuple, Optional
 from .core import TorchSignal, TorchTime
-from .layers import MLP, ComplexLinear, complex_weight_composition, ComplexConv1d, Id
+from .layers import MLP, ComplexLinear, complex_weight_composition, ComplexConv1d, Id, StepFunction 
 
 
 class BasePBC(nn.Module):
@@ -378,7 +378,7 @@ class SymPBC(nn.Module):
     Attributes:
         rho, L: parameter for choose C index.
         overlaps: int. 
-        C_real, C_imag: torch.nn.Parameter. 
+        index_type: 'A' or 'B'
     '''
     def __init__(self, rho=1.0, L=50, index_type='A'):
         '''
@@ -625,36 +625,111 @@ class SymHoPBC(nn.Module):
         return signal
 
 
-class ConvPBC(nn.Module):
+class AmSymFoPBC(SymPBC):
 
-    def __init__(self, Nmodes=1, xpm_size=101, fwm_heads=16):
-        super().__init__()
-        self.Nmodes = Nmodes
-        assert xpm_size % 2 == 1
-        self.xpm_size = xpm_size
-        self.fwm_size = xpm_size
-        self.fwm_heads = fwm_heads
+    def __init__(self, rho=1.0, L=50, xpm_size=None, index_type='A'):
+        super(AmSymFoPBC, self).__init__(rho, L, index_type)
+        self.index = self.get_index()
+        self.xpm_size = xpm_size if xpm_size != None else L + 1
+
+        assert self.xpm_size - 1 >= L
         self.overlaps = self.xpm_size - 1
-        self.xpm_conv = nn.Conv1d(self.Nmodes, self.Nmodes, self.xpm_size, bias=False)      # real convolution
+        self.xpm_conv = nn.Conv1d(1, 1, self.xpm_size, bias=False)      # real convolution
+        self.nn = ComplexLinear(len(self.index), 1, bias=False)  # no bias term
+        nn.init.zeros_(self.nn.real.weight)
+        nn.init.zeros_(self.nn.imag.weight)
         nn.init.zeros_(self.xpm_conv.weight)
-        self.fwm_conv_m = ComplexConv1d(1, self.fwm_heads, self.fwm_size,bias=False)   # complex convolution
-        self.fwm_conv_n = ComplexConv1d(1, self.fwm_heads, self.fwm_size,bias=False)   # complex convolution
-        self.fwm_conv_k = ComplexConv1d(1, self.fwm_heads, self.fwm_size,bias=False)   # complex convolution
 
 
+    def get_index(self):
+        '''
+            Get symetric pertubation indexes.
+            S = {(m,n)| |mn|<= rho*L/2, |m|<=L/2, |n|<= L/2, n>=|m|, mn \neq 0}
+        '''
+        S = []
+        if self.index_type == 'A':
+            for m in range(-self.L//2, self.L//2 + 1):
+                for n in range(-self.L//2, self.L//2 + 1):
+                    if (abs(m*n) <= self.rho * self.L //2) and (n >= abs(m)) and (m*n != 0):
+                        S.append((m,n))
+        elif self.index_type == 'B':
+            for m in range(-self.L//2, self.L//2 + 1):
+                for n in range(-self.L//2, self.L//2 + 1):
+                    if (abs(m) + abs(n) <=  self.L //2) and (n >= abs(m)) and (m*n != 0):
+                        S.append((m,n))
+        else:
+            raise ValueError
+        return S
+
+    
+    def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None) -> TorchSignal:
+        '''
+        Input:
+            signal: val shape = [batch, L, Nmodes] or [L, Nmodes]
+            task_info: torch.Tensor or None. [B, 4] ot None.    [P,Fi,Fs,Nch]
+        Output:
+            TorchSignal.
+            Nmodes = 1:
+                O_{b,k,i} = gamma P0^{3/2} * sum_{m,n} E_{b, k+n, i} E_{b, k+m+n, i}^* E_{b, k+m, i} C_{m,n}
+            Nmodes = 2:
+                O_{b,k,i} = gamma P0^{3/2} * sum_{m,n} (E_{b, k+n, i} E_{b, k+m+n, i}^* +  E_{b, k+n, -i} E_{b, k+m+n, -i}^*) E_{b, k+m, i} C_{m,n}
+        '''
+        P = torch.tensor(1) if task_info == None else 10**(task_info[:,0]/10)/signal.val.shape[-1]   # [batch] or ()
+        P = P.to(signal.val.device)
+
+        x = signal.val.transpose(1,2)  # x [B, M, L]
+        phi = self.xpm_conv(torch.abs(x)**2).transpose(1,2)      # [B, L - xpm_size + 1, M]
+
+        features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
+        features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:]               # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
+        E = self.nn(features*torch.sqrt(P[...,None,None,None])**3)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
+        E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        
+
+        E = E + signal.val[...,(self.overlaps//2):-(self.overlaps//2),:]*torch.exp(1j*phi)                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        return TorchSignal(val=E, t=TorchTime(signal.t.start + (self.overlaps//2), signal.t.stop - (self.overlaps//2), signal.t.sps))
+
+
+
+class ConvPBC(AmSymFoPBC):
+
+    def __init__(self, rho=1.0, L=50, xpm_size=None, index_type='A', fwm_heads=16, Nmodes=1):
+        super(ConvPBC, self).__init__(rho, L, xpm_size, index_type)
+        self.Nmodes = Nmodes
+        self.fwm_size = self.xpm_size
+        self.fwm_heads = fwm_heads
+
+        if self.fwm_heads > 0:
+            self.fwm_conv_m = ComplexConv1d(1, self.fwm_heads, self.fwm_size,bias=False)   # complex convolution
+            self.fwm_conv_n = ComplexConv1d(1, self.fwm_heads, self.fwm_size,bias=False)   # complex convolution
+            self.fwm_conv_k = ComplexConv1d(1, self.fwm_heads, self.fwm_size,bias=False)   # complex convolution
         
     def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None) -> TorchSignal:
         P = torch.tensor(1) if task_info == None else 10**(task_info[:,0]/10)/signal.val.shape[-1]   # [batch] or ()
         P = P.to(signal.val.device)
+
+        # XPM conv
         x = signal.val.transpose(1,2)  # x [B, M, L]
         phi = self.xpm_conv(torch.abs(x)**2)      # [B, M, L - xpm_size + 1]
-        x_ = x.view(-1, x.shape[-1]).unsqueeze(1) # [B*M, 1, L]
-        Am = self.fwm_conv_m(x_).view(x.shape[0], x.shape[1], self.fwm_heads, -1)       # [B, M, heads, L - fwm_size + 1]
-        An = self.fwm_conv_n(x_).view(x.shape[0], x.shape[1], self.fwm_heads, -1)       # [B, M, heads, L - fwm_size + 1]
-        Ak = self.fwm_conv_k(x_).view(x.shape[0], x.shape[1], self.fwm_heads, -1)       # [B, M, heads, L - fwm_size + 1]
-        S = torch.sum(Am*Ak.conj(), dim=1)                                              # [B, heads, L - fwm_size + 1]
-        E = x[:,:, self.xpm_size//2:-(self.xpm_size//2)]*torch.exp(1j*phi) + torch.sum(An*S.unsqueeze(1), dim=2)  # [B, M, L - xpm_size + 1]
-        return  TorchSignal(val=E.transpose(1,2), t=TorchTime(signal.t.start + (self.xpm_size//2), signal.t.stop - (self.xpm_size//2), signal.t.sps))
+        
+        # FWM triplets
+        features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
+        features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:]               # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
+        E = self.nn(features*torch.sqrt(P[...,None,None,None])**3)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
+        E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        
+        # FWM convolution 
+        if self.fwm_heads == 0:
+            F = x[:,:, self.xpm_size//2:-(self.xpm_size//2)]*torch.exp(1j*phi) + E.transpose(1,2)  # [B, M, L - xpm_size + 1]
+        else:
+            x_ = x.view(-1, x.shape[-1]).unsqueeze(1) # [B*M, 1, L]
+            Am = self.fwm_conv_m(x_).view(x.shape[0], x.shape[1], self.fwm_heads, -1)       # [B, M, heads, L - fwm_size + 1]
+            An = self.fwm_conv_n(x_).view(x.shape[0], x.shape[1], self.fwm_heads, -1)       # [B, M, heads, L - fwm_size + 1]
+            Ak = self.fwm_conv_k(x_).view(x.shape[0], x.shape[1], self.fwm_heads, -1)       # [B, M, heads, L - fwm_size + 1]
+            S = torch.sum(Am*Ak.conj(), dim=1)                                              # [B, heads, L - fwm_size + 1]
+            F = x[:,:, self.xpm_size//2:-(self.xpm_size//2)]*torch.exp(1j*phi) + torch.sum(An*S.unsqueeze(1), dim=2) + E.transpose(1,2)  # [B, M, L - xpm_size + 1]
+
+        return  TorchSignal(val=F.transpose(1,2), t=TorchTime(signal.t.start + (self.xpm_size//2), signal.t.stop - (self.xpm_size//2), signal.t.sps))
 
 
 class HoConvPBC(nn.Module):
@@ -682,6 +757,144 @@ class HoConvPBC(nn.Module):
         return signal
 
 
+
+
+class RoSymFoPBC(SymPBC):
+
+    def __init__(self, rho=1.0, L=50, index_type='A'):
+        super(RoSymFoPBC, self).__init__(rho, L, index_type)
+        self.nn = ComplexLinear(len(self.index), 1, bias=False)  # no bias term
+        nn.init.zeros_(self.nn.real.weight)
+        nn.init.zeros_(self.nn.imag.weight)
+
+    def get_C(self):
+        '''
+            Get pertubation coefficients.
+        '''
+        C = self.nn.real.weight.data + (1j) * self.nn.imag.weight.data
+        return C.detach().to('cpu').numpy()
+    
+    def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None) -> TorchSignal:
+        '''
+        Input:
+            signal: val shape = [batch, L, Nmodes] or [L, Nmodes]
+            task_info: torch.Tensor or None. [B, 4] ot None.    [P,Fi,Fs,Nch]
+        Output:
+            TorchSignal.
+            Nmodes = 1:
+                O_{b,k,i} = gamma P0^{3/2} * sum_{m,n} E_{b, k+n, i} E_{b, k+m+n, i}^* E_{b, k+m, i} C_{m,n}
+            Nmodes = 2:
+                O_{b,k,i} = gamma P0^{3/2} * sum_{m,n} (E_{b, k+n, i} E_{b, k+m+n, i}^* +  E_{b, k+n, -i} E_{b, k+m+n, -i}^*) E_{b, k+m, i} C_{m,n}
+        '''
+        P = torch.tensor(1) if task_info == None else 10**(task_info[:,0]/10)/signal.val.shape[-1]   # [batch] or ()
+        P = P.to(signal.val.device)
+        features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
+        features = features[..., (self.L//2):-(self.L//2),:,:]               # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
+        E = self.nn(features*torch.sqrt(P[...,None,None,None])**3)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
+        E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        U = signal.val[...,(self.L//2):-(self.L//2),:]
+        E = U * torch.exp(1j * E/U)                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        return TorchSignal(val=E, t=TorchTime(signal.t.start + (self.L//2), signal.t.stop - (self.L//2), signal.t.sps))
+
+
+class AdaptSymFoPBC(SymPBC):
+
+    def __init__(self, rho=1.0, L=50, xpm_size=None, index_type='A'):
+        super(AdaptSymFoPBC, self).__init__(rho, L, index_type)
+        self.index = self.get_index()
+        self.xpm_size = xpm_size if xpm_size != None else L + 1
+
+        assert self.xpm_size - 1 >= L
+        self.overlaps = self.xpm_size - 1
+        self.xpm_conv = nn.Conv1d(1, 1, self.xpm_size, bias=False)      # real convolution
+        self.nn = ComplexLinear(len(self.index), 1, bias=False)  # no bias term
+        self.adapt = StepFunction()
+        nn.init.zeros_(self.nn.real.weight)
+        nn.init.zeros_(self.nn.imag.weight)
+        nn.init.zeros_(self.xpm_conv.weight)
+    
+    def get_index(self):
+        '''
+            Get symetric pertubation indexes.
+            S = {(m,n)| |mn|<= rho*L/2, |m|<=L/2, |n|<= L/2, n>=|m|, mn \neq 0}
+        '''
+        S = []
+        if self.index_type == 'A':
+            for m in range(-self.L//2, self.L//2 + 1):
+                for n in range(-self.L//2, self.L//2 + 1):
+                    if (abs(m*n) <= self.rho * self.L //2) and (n >= abs(m)) and (m*n != 0):
+                        S.append((m,n))
+        elif self.index_type == 'B':
+            for m in range(-self.L//2, self.L//2 + 1):
+                for n in range(-self.L//2, self.L//2 + 1):
+                    if (abs(m) + abs(n) <=  self.L //2) and (n >= abs(m)) and (m*n != 0):
+                        S.append((m,n))
+        else:
+            raise ValueError
+        return S
+
+    
+    def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None) -> TorchSignal:
+        '''
+        Input:
+            signal: val shape = [batch, L, Nmodes] or [L, Nmodes]
+            task_info: torch.Tensor or None. [B, 4] ot None.    [P,Fi,Fs,Nch]
+        Output:
+            TorchSignal.
+            Nmodes = 1:
+                O_{b,k,i} = gamma P0^{3/2} * sum_{m,n} E_{b, k+n, i} E_{b, k+m+n, i}^* E_{b, k+m, i} C_{m,n}
+            Nmodes = 2:
+                O_{b,k,i} = gamma P0^{3/2} * sum_{m,n} (E_{b, k+n, i} E_{b, k+m+n, i}^* +  E_{b, k+n, -i} E_{b, k+m+n, -i}^*) E_{b, k+m, i} C_{m,n}
+        '''
+        P = torch.tensor(1) if task_info == None else 10**(task_info[:,0]/10)/signal.val.shape[-1]   # [batch] or ()
+        P = P.to(signal.val.device)
+
+        x = signal.val.transpose(1,2)  # x [B, M, L]
+        phi = self.xpm_conv(torch.abs(x)**2).transpose(1,2)      # [B, L - xpm_size + 1, M]
+
+        features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
+        features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:]               # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
+        E = self.nn(features*torch.sqrt(P[...,None,None,None])**3 * self.adapt(P[...,None,None,None]))           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
+        E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        E = E + signal.val[...,(self.overlaps//2):-(self.overlaps//2),:]*torch.exp(1j*phi)                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        return TorchSignal(val=E, t=TorchTime(signal.t.start + (self.overlaps//2), signal.t.stop - (self.overlaps//2), signal.t.sps))
+
+
+
+
+class MultiStepPBC(nn.Module):
+    def __init__(self, steps=2, fo_type='SymFoPBC', **kwargs):
+        '''
+        L propto Rs^2
+        '''
+        super(MultiStepPBC, self).__init__()
+        self.steps = steps
+        fo_models = {
+            'FoPBC': FoPBC,
+            'FoPBCNN': FoPBCNN,
+            'SymFoPBC': SymFoPBC,
+            'SymFoPBCNN': SymFoPBCNN,
+            'ConvPBC': ConvPBC,
+            'AmSymFoPBC': AmSymFoPBC,
+            'RoSymFoPBC': RoSymFoPBC,
+            'AdaptSymFoPBC': AdaptSymFoPBC,
+        }  
+        module = fo_models[fo_type]
+        self.HPBC_steps = nn.ModuleList([module(**kwargs) for i in range(steps)])
+        self.overlaps = sum([model.overlaps for model in self.HPBC_steps])
+
+    def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None):
+        '''
+        E: [batch, L, Nmodes] or [L, Nmodes]
+        task_info: P,Fi,Fs,Nch 
+        O_{b,k,i} = sum_{m,n} (E_{b, k+n, i} E_{b, k+m+n, i}^* +  E_{b, k+n, -i} E_{b, k+m+n, -i}^*) E_{b, k+m, i}
+        '''
+        for i in range(self.steps):
+            signal = self.HPBC_steps[i](signal, task_info)
+        return signal
+
+
+
 models = {
             'FoPBC': FoPBC,
             'SoPBC': SoPBC,
@@ -691,7 +904,11 @@ models = {
             'SymFoPBCNN': SymFoPBCNN,
             'SymHoPBC': SymHoPBC,
             'ConvPBC': ConvPBC,
-            'HoConvPBC': HoConvPBC
+            'HoConvPBC': HoConvPBC,
+            'AmSymFoPBC': AmSymFoPBC,
+            'MultiStepPBC': MultiStepPBC,
+            'RoSymFoPBC': RoSymFoPBC,
+            'AdaptSymFoPBC': AdaptSymFoPBC,
         }  
 
 
@@ -724,8 +941,10 @@ if __name__ == '__main__':
     #net = SymFoPBC(rho=1.0, L=50)
     #net = SymFoPBCNN(rho=1.0, L=50, hidden_size=[2, 10], dropout=0.5, activation='relu')
     #net = SymHoPBC(rho=1.0, L=50, steps=2)
-    # net = ConvPBC()
-    net = HoConvPBC()
+    net = ConvPBC()
+    # net = HoConvPBC()
+    # net = AmSymFoPBC(rho=1.0, L=50, xpm_size=201)
+    # net = MultiStepPBC(steps=2, fo_type='SymFoPBC', rho=1.0, L=50)
     net = net.to(device)
     signal_out = net(signal, train_z)
 

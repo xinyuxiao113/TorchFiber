@@ -10,6 +10,20 @@ class Id(nn.Module):
         return x
 
 
+class StepFunction(nn.Module):
+    def __init__(self, start:int=-8, stop:int=8):
+        super(StepFunction, self).__init__()
+        num = stop - start + 1
+        self.start = start
+        self.stop = stop
+        self.function_values = nn.Parameter(torch.ones(num))
+        
+    def forward(self, x):
+        x = torch.minimum(torch.maximum(x, torch.tensor(self.start)), torch.tensor(self.stop))
+        idx = (x - self.start).to(torch.int)
+        return self.function_values[idx]
+
+
 class MLP(nn.Module):
     '''
     Multi-layer perceptron.
