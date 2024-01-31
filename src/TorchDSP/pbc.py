@@ -862,6 +862,60 @@ class AdaptSymFoPBC(SymPBC):
 
 
 
+class MixAmSymFoPBC(SymPBC):
+
+    def __init__(self, rho=1.0, L=50, index_type='A'):
+        super(MixAmSymFoPBC, self).__init__(rho, L, index_type)
+
+        self.overlaps = L
+
+        self.mask = nn.Parameter(torch.zeros(len(self.index)), requires_grad=True) 
+        self.nn = ComplexLinear(len(self.index), 1, bias=False)  # no bias term
+        nn.init.zeros_(self.nn.real.weight)
+        nn.init.zeros_(self.nn.imag.weight)
+
+    # def generate_mask(self, P):
+    #     '''
+    #         Generate mask.
+    #     '''
+    #     self.mask = nn.Parameter(torch.zeros(len(self.index)), requires_grad=True) 
+    #     for i,(m,n) in enumerate(self.index):
+    #         if m*n == 0:
+    #             self.mask[i] = 1
+
+
+    
+    def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None) -> TorchSignal:
+        '''
+        Input:
+            signal: val shape = [batch, L, Nmodes] or [L, Nmodes]
+            task_info: torch.Tensor or None. [B, 4] ot None.    [P,Fi,Fs,Nch]
+        Output:
+            TorchSignal.
+            Nmodes = 1:
+                O_{b,k,i} = gamma P0^{3/2} * sum_{m,n} E_{b, k+n, i} E_{b, k+m+n, i}^* E_{b, k+m, i} C_{m,n}
+            Nmodes = 2:
+                O_{b,k,i} = gamma P0^{3/2} * sum_{m,n} (E_{b, k+n, i} E_{b, k+m+n, i}^* +  E_{b, k+n, -i} E_{b, k+m+n, -i}^*) E_{b, k+m, i} C_{m,n}
+        '''
+        P = torch.tensor(1) if task_info == None else 10**(task_info[:,0]/10)/signal.val.shape[-1]   # [batch] or ()
+        P = P.to(signal.val.device)
+
+        x = signal.val.transpose(1,2)  # x [B, M, L]
+
+
+        features = self.nonlinear_features(signal.val)                          # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
+        features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:]    # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
+        rate = torch.sigmoid(self.mask)                                          # [len(S)]
+        E1 = self.nn(features*torch.sqrt(P[...,None,None,None])**3*rate)[...,0]      # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        E2 = self.nn(features*torch.sqrt(P[...,None,None,None])**3*(1-rate))[...,0]      # [batch, W-L, Nmodes] or [W-L, Nmodes]   
+                                                    
+        U = signal.val[...,(self.L//2):-(self.L//2),:]
+        E = U*torch.exp(1j*E1/U) + (1j)*E2                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        return TorchSignal(val=E, t=TorchTime(signal.t.start + (self.overlaps//2), signal.t.stop - (self.overlaps//2), signal.t.sps))
+
+
+
+
 class MultiStepPBC(nn.Module):
     def __init__(self, steps=2, fo_type='SymFoPBC', **kwargs):
         '''
@@ -909,6 +963,7 @@ models = {
             'MultiStepPBC': MultiStepPBC,
             'RoSymFoPBC': RoSymFoPBC,
             'AdaptSymFoPBC': AdaptSymFoPBC,
+            'MixAmSymFoPBC': MixAmSymFoPBC,
         }  
 
 
@@ -941,7 +996,8 @@ if __name__ == '__main__':
     #net = SymFoPBC(rho=1.0, L=50)
     #net = SymFoPBCNN(rho=1.0, L=50, hidden_size=[2, 10], dropout=0.5, activation='relu')
     #net = SymHoPBC(rho=1.0, L=50, steps=2)
-    net = ConvPBC()
+    # net = ConvPBC()
+    net = MixAmSymFoPBC(rho=1, L=50)
     # net = HoConvPBC()
     # net = AmSymFoPBC(rho=1.0, L=50, xpm_size=201)
     # net = MultiStepPBC(steps=2, fo_type='SymFoPBC', rho=1.0, L=50)
