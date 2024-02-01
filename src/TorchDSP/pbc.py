@@ -660,6 +660,18 @@ class AmSymFoPBC(SymPBC):
         else:
             raise ValueError
         return S
+    
+    def IXIXPM(self, E):
+        x = E * torch.roll(E.conj(),1, dims=-1)  # x [B, L, Nmodes]
+        x = x.transpose(1,2)                            # x [B, Nmodes, L]
+        x = x.reshape(-1, 1, x.shape[-1])               # x [B*Nmodes, 1, L]
+        x = 0.5*(self.xpm_conv(x.real) + (1j)*self.xpm_conv(x.imag))                           # x [B*Nmodes, 1, L - xpm_size + 1]
+        x = x.reshape(-1, E.shape[-1], x.shape[-1])  # x [B, Nmodes, L - xpm_size + 1]
+        x = x.transpose(1,2)                            # x [B, L - xpm_size + 1, Nmodes]
+        y = x * E[...,(self.overlaps//2):-(self.overlaps//2),:].roll(1, dims=-1)  # x [B, L - xpm_size + 1, Nmodes]
+        y = y - 0.5*self.xpm_conv.weight[0,0,self.xpm_size//2] * (E * E.roll(1, dims=-1) * E.roll(1, dims=-1).conj())[...,(self.overlaps//2):-(self.overlaps//2),:]  
+        return y
+              
 
     
     def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None) -> TorchSignal:
@@ -677,8 +689,10 @@ class AmSymFoPBC(SymPBC):
         P = torch.tensor(1) if task_info == None else 10**(task_info[:,0]/10)/signal.val.shape[-1]   # [batch] or ()
         P = P.to(signal.val.device)
 
-        x = signal.val.transpose(1,2)  # x [B, M, L]
-        phi = self.xpm_conv(torch.abs(x)**2).transpose(1,2)      # [B, L - xpm_size + 1, M]
+        x = signal.val.transpose(1,2)  # x [B, Nmodes, L]
+        x = torch.sum(torch.abs(x)**2, dim=1, keepdim=True)  # x [B, 1, L]
+        phi = self.xpm_conv(torch.abs(x)**2).transpose(1,2)      # [B, L - xpm_size + 1, 1]
+
 
         features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
         features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:]               # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
@@ -687,6 +701,10 @@ class AmSymFoPBC(SymPBC):
         
 
         E = E + signal.val[...,(self.overlaps//2):-(self.overlaps//2),:]*torch.exp(1j*phi)                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        
+        if signal.val.shape[-1] == 2:
+            E = E + self.IXIXPM(signal.val)
+
         return TorchSignal(val=E, t=TorchTime(signal.t.start + (self.overlaps//2), signal.t.stop - (self.overlaps//2), signal.t.sps))
 
 
@@ -980,7 +998,7 @@ if __name__ == '__main__':
 
     device = 'cpu'
 
-    train_y, train_x,train_t = pickle.load(open('data/train_data_afterCDCDSP.pkl', 'rb'))
+    train_y, train_x,train_t = pickle.load(open('data/Nmodes2/train_afterCDCDSP.pkl', 'rb'))
     k = get_k_batch(1, 20, train_t)
     train_signal = TorchSignal(train_y[k], TorchTime(0,0,1)).to(device)
     train_z = train_t[k].to(device)
@@ -989,7 +1007,8 @@ if __name__ == '__main__':
     print(train_x.shape)
     
     signal = train_signal.get_slice(1000, 0)
-    #net = FoPBC(rho=1.0, L=50)
+    
+    # net = FoPBC(rho=1.0, L=50)
     #net = SoPBC(rho=1.0, L=50, Lk=10)
     #net = HoPBC(rho=1.0, L=50, steps=2)
     #net = FoPBCNN(rho=1.0, L=50, hidden_size=[2, 10], dropout=0.5, activation='relu')
@@ -997,13 +1016,16 @@ if __name__ == '__main__':
     #net = SymFoPBCNN(rho=1.0, L=50, hidden_size=[2, 10], dropout=0.5, activation='relu')
     #net = SymHoPBC(rho=1.0, L=50, steps=2)
     # net = ConvPBC()
-    net = MixAmSymFoPBC(rho=1, L=50)
+    # net = MixAmSymFoPBC(rho=1, L=50)
     # net = HoConvPBC()
     # net = AmSymFoPBC(rho=1.0, L=50, xpm_size=201)
     # net = MultiStepPBC(steps=2, fo_type='SymFoPBC', rho=1.0, L=50)
-    net = net.to(device)
-    signal_out = net(signal, train_z)
+    modules = [AmSymFoPBC(rho=1.0, L=50, xpm_size=201), MultiStepPBC(steps=2, fo_type='SymFoPBC', rho=1.0, L=50), SoPBC(rho=1.0, L=50, Lk=10), ConvPBC(Nmodes=2)]
 
-    print(signal_out.val.shape)
+    for net in modules:
+        print(net)
+        net = net.to(device)
+        signal_out = net(signal, train_z)
+        print(signal_out.val.shape)
 
 

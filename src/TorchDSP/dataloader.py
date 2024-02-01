@@ -94,7 +94,7 @@ def get_Qsq(path: str, discard:int) -> tuple[dict, np.ndarray, np.ndarray, np.nd
 
     for key in Q.keys():
         try:
-            Q_ = Q[key]['Qsq'].reshape(len(Rss), len(Nchs), len(Ps))
+            Q_ = Q[key]['Qsq'].reshape(len(Rss), len(Nchs), len(Ps), Q[key]['Qsq'].shape[-1])
         except:
             Q_ = Q[key]['Qsq']
         res[key] = Q_
