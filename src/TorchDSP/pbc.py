@@ -1,7 +1,7 @@
 import torch.nn as nn, torch, numpy as np, torch, matplotlib.pyplot as plt
 from typing import Union, List, Tuple, Optional
 from .core import TorchSignal, TorchTime
-from .layers import MLP, ComplexLinear, complex_weight_composition, ComplexConv1d, Id, StepFunction 
+from .layers import MLP, ComplexLinear, complex_weight_composition, ComplexConv1d, Id, StepFunction
 
 
 class BasePBC(nn.Module):
@@ -625,8 +625,120 @@ class SymHoPBC(nn.Module):
         return signal
 
 
-class AmSymFoPBC(SymPBC):
+class AmFoPBC(SymPBC):
+    '''
+    Latest version of AmFoPBC. Nmodes=1,2.
+    '''
 
+    def __init__(self, rho=1.0, L=50, xpm_size=None, index_type='A'):
+        super(AmFoPBC, self).__init__(rho, L, index_type)
+        self.index = self.get_index()
+        self.xpm_size = xpm_size if xpm_size != None else L + 1
+
+        assert self.xpm_size - 1 >= L
+        self.overlaps = self.xpm_size - 1
+        self.C0 = nn.Parameter(torch.zeros((), dtype=torch.float32), requires_grad=True)
+        # self.xpm_conv = nn.Conv1d(1, 1, self.xpm_size, bias=False)   # real convolution
+        self.xpm_conv = ComplexConv1d(1, 1, self.xpm_size, bias=False)
+        self.nn = ComplexLinear(len(self.index), 1, bias=False)      # no bias term
+        nn.init.zeros_(self.nn.real.weight)
+        nn.init.zeros_(self.nn.imag.weight)
+        nn.init.zeros_(self.xpm_conv.weight)
+
+    def zcv_filter(self, x):
+        '''
+        zeros center vmap filter.
+        x: real [B, L, Nmodes] -> real [B, L -  xpm_size + 1, Nmodes]
+        '''
+        B = x.shape[0]
+        Nmodes = x.shape[-1]
+        x = x.transpose(1,2)                            # x [B, Nmodes, L]
+        x = x.reshape(-1, 1, x.shape[-1])               # x [B*Nmodes, 1, L]
+        # c0 = self.xpm_conv.weight[0,0, self.xpm_size//2]
+        # x = self.xpm_conv(x) - c0 * x[:,:,(self.overlaps//2):-(self.overlaps//2)]     # x [B*Nmodes, 1, L - xpm_size + 1]
+        x = self.xpm_conv(x)
+        x = x.reshape(B, Nmodes, x.shape[-1])          # x [B, Nmodes, L - xpm_size + 1]
+        x = x.transpose(1,2)                            # x [B, L - xpm_size + 1, Nmodes] 
+        return x
+              
+
+
+    def get_index(self):
+        '''
+            Get symetric pertubation indexes.
+            S = {(m,n)| |mn|<= rho*L/2, |m|<=L/2, |n|<= L/2, n>=|m|, mn \neq 0}
+        '''
+        S = []
+        if self.index_type == 'A':
+            for m in range(-self.L//2, self.L//2 + 1):
+                for n in range(-self.L//2, self.L//2 + 1):
+                    if (abs(m*n) <= self.rho * self.L //2) and (n >= abs(m)) and (m*n != 0):
+                        S.append((m,n))
+        elif self.index_type == 'B':
+            for m in range(-self.L//2, self.L//2 + 1):
+                for n in range(-self.L//2, self.L//2 + 1):
+                    if (abs(m) + abs(n) <=  self.L //2) and (n >= abs(m)) and (m*n != 0):
+                        S.append((m,n))
+        else:
+            raise ValueError
+        return S
+    
+    
+    def IXIXPM(self, E, P):
+        x = E * torch.roll(E.conj(),1, dims=-1)                                   # x [B, L, Nmodes]
+        x = self.zcv_filter(x.real) + (1j)*self.zcv_filter(x.imag)                # x [B, L - xpm_size + 1, Nmodes]
+        x = E[...,(self.overlaps//2):-(self.overlaps//2),:].roll(1, dims=-1) * x  # x [B, L - xpm_size + 1, Nmodes] 
+        return x * torch.sqrt(P[...,None,None])**3 * (1j)
+              
+
+    
+    def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None) -> TorchSignal:
+        '''
+        Input:
+            signal: val shape = [batch, L, Nmodes] or [L, Nmodes]
+            task_info: torch.Tensor or None. [B, 4] ot None.    [P,Fi,Fs,Nch]
+        Output:
+            TorchSignal.
+            Nmodes = 1:
+                O_{b,k,i} = gamma P0^{3/2} * sum_{m,n} E_{b, k+n, i} E_{b, k+m+n, i}^* E_{b, k+m, i} C_{m,n}
+            Nmodes = 2:
+                O_{b,k,i} = gamma P0^{3/2} * sum_{m,n} (E_{b, k+n, i} E_{b, k+m+n, i}^* +  E_{b, k+n, -i} E_{b, k+m+n, -i}^*) E_{b, k+m, i} C_{m,n}
+        '''
+        P = torch.tensor(1) if task_info == None else 10**(task_info[:,0]/10)/signal.val.shape[-1]   # [batch] or ()
+        P = P.to(signal.val.device)
+        Nmodes = signal.val.shape[-1]
+
+        # IFWM term
+        features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
+        features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:] # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
+        E = self.nn(features*torch.sqrt(P[...,None,None,None])**3)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
+        E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        
+        # SPM + IXPM
+        if Nmodes == 1:
+            power = torch.abs(signal.val)**2
+            phi = torch.sqrt(P[...,None,None])**3 * (self.C0 * power[:, (self.overlaps//2):-(self.overlaps//2),:]+ 2*self.zcv_filter(power))     # [B, L - xpm_size + 1, 1]
+        elif Nmodes == 2:
+            power = torch.abs(signal.val)**2
+            x = 2*power + torch.roll(power, 1, dims=-1)               # x [B, L, Nmodes]
+            phi = torch.sqrt(P[...,None,None])**3 * (self.C0*power[:, (self.overlaps//2):-(self.overlaps//2),:].sum(dim=-1, keepdim=True) + 2*self.zcv_filter(x))
+        else:
+            raise ValueError('signal.val.shape[-1] should be 1 or 2')
+
+        if signal.val.shape[-1] == 2:
+            E = E + self.IXIXPM(signal.val, P)
+
+        E = (E + signal.val[...,(self.overlaps//2):-(self.overlaps//2),:])*torch.exp(1j*phi)                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
+
+        return TorchSignal(val=E, t=TorchTime(signal.t.start + (self.overlaps//2), signal.t.stop - (self.overlaps//2), signal.t.sps))
+
+
+
+
+class AmSymFoPBC(SymPBC):
+    '''
+    old version of Am-PBC, only for Nmodes = 1
+    '''
     def __init__(self, rho=1.0, L=50, xpm_size=None, index_type='A'):
         super(AmSymFoPBC, self).__init__(rho, L, index_type)
         self.index = self.get_index()
@@ -660,18 +772,7 @@ class AmSymFoPBC(SymPBC):
         else:
             raise ValueError
         return S
-    
-    def IXIXPM(self, E):
-        x = E * torch.roll(E.conj(),1, dims=-1)  # x [B, L, Nmodes]
-        x = x.transpose(1,2)                            # x [B, Nmodes, L]
-        x = x.reshape(-1, 1, x.shape[-1])               # x [B*Nmodes, 1, L]
-        x = 0.5*(self.xpm_conv(x.real) + (1j)*self.xpm_conv(x.imag))                           # x [B*Nmodes, 1, L - xpm_size + 1]
-        x = x.reshape(-1, E.shape[-1], x.shape[-1])  # x [B, Nmodes, L - xpm_size + 1]
-        x = x.transpose(1,2)                            # x [B, L - xpm_size + 1, Nmodes]
-        y = x * E[...,(self.overlaps//2):-(self.overlaps//2),:].roll(1, dims=-1)  # x [B, L - xpm_size + 1, Nmodes]
-        y = y - 0.5*self.xpm_conv.weight[0,0,self.xpm_size//2] * (E * E.roll(1, dims=-1) * E.roll(1, dims=-1).conj())[...,(self.overlaps//2):-(self.overlaps//2),:]  
-        return y
-              
+
 
     
     def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None) -> TorchSignal:
@@ -689,22 +790,18 @@ class AmSymFoPBC(SymPBC):
         P = torch.tensor(1) if task_info == None else 10**(task_info[:,0]/10)/signal.val.shape[-1]   # [batch] or ()
         P = P.to(signal.val.device)
 
-        x = signal.val.transpose(1,2)  # x [B, Nmodes, L]
-        x = torch.sum(torch.abs(x)**2, dim=1, keepdim=True)  # x [B, 1, L]
+        # XPM conv for Nomdes = 1
+        x = signal.val.transpose(1,2)  # x [B, M, L]
         phi = self.xpm_conv(torch.abs(x)**2).transpose(1,2)      # [B, L - xpm_size + 1, 1]
 
-
+        # IFWM term
         features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
-        features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:]               # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
+        features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:] # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
         E = self.nn(features*torch.sqrt(P[...,None,None,None])**3)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
         E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
-        
 
+            
         E = E + signal.val[...,(self.overlaps//2):-(self.overlaps//2),:]*torch.exp(1j*phi)                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
-        
-        if signal.val.shape[-1] == 2:
-            E = E + self.IXIXPM(signal.val)
-
         return TorchSignal(val=E, t=TorchTime(signal.t.start + (self.overlaps//2), signal.t.stop - (self.overlaps//2), signal.t.sps))
 
 
@@ -978,6 +1075,7 @@ models = {
             'ConvPBC': ConvPBC,
             'HoConvPBC': HoConvPBC,
             'AmSymFoPBC': AmSymFoPBC,
+            'AmFoPBC': AmFoPBC,
             'MultiStepPBC': MultiStepPBC,
             'RoSymFoPBC': RoSymFoPBC,
             'AdaptSymFoPBC': AdaptSymFoPBC,
@@ -1020,7 +1118,8 @@ if __name__ == '__main__':
     # net = HoConvPBC()
     # net = AmSymFoPBC(rho=1.0, L=50, xpm_size=201)
     # net = MultiStepPBC(steps=2, fo_type='SymFoPBC', rho=1.0, L=50)
-    modules = [AmSymFoPBC(rho=1.0, L=50, xpm_size=201), MultiStepPBC(steps=2, fo_type='SymFoPBC', rho=1.0, L=50), SoPBC(rho=1.0, L=50, Lk=10), ConvPBC(Nmodes=2)]
+    # modules = [AmSymFoPBC(rho=1.0, L=50, xpm_size=201), MultiStepPBC(steps=2, fo_type='SymFoPBC', rho=1.0, L=50), SoPBC(rho=1.0, L=50, Lk=10), ConvPBC(Nmodes=2)]
+    modules = [AmFoPBC(rho=1.0, L=50, xpm_size=201)]
 
     for net in modules:
         print(net)
