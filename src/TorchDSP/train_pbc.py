@@ -169,11 +169,11 @@ def train_model(config: dict):
 
             torch.save(checkpoint, config['model_path'] + f'.ckpt{epoch}')
 
-            writer.add_scalar('Metric/Q_max', np.max(metric['Qsq']), epoch)
-            writer.add_scalar('Metric/BER_min', np.min(metric['BER']), epoch)
+            writer.add_scalar('Metric/Q_max', np.max(np.mean(metric['Qsq'], axis=-1)), epoch)
+            writer.add_scalar('Metric/BER_min', np.min(np.mean(metric['BER'],axis=-1)), epoch)
 
-            writer.add_scalar('Metric/Q_mean', np.mean(metric['Qsq']), epoch)
-            writer.add_scalar('Metric/BER_mean', np.mean(metric['BER']), epoch)
+            writer.add_scalar('Metric/Q_mean', np.mean(np.mean(metric['Qsq'], axis=-1)), epoch)
+            writer.add_scalar('Metric/BER_mean', np.mean(np.mean(metric['BER'], axis=-1)), epoch)
 
             print(f"Epoch [{epoch}/{config['epochs']}] BER: ", metric['BER'], flush=True)
             print(f"Epoch [{epoch}/{config['epochs']}] Qsq: ", metric['Qsq'], flush=True)

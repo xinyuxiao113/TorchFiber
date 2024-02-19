@@ -638,14 +638,15 @@ class AmFoPBC(SymPBC):
         assert self.xpm_size - 1 >= L
         self.overlaps = self.xpm_size - 1
         self.C0 = nn.Parameter(torch.zeros((), dtype=torch.float32), requires_grad=True)
-        # self.xpm_conv = nn.Conv1d(1, 1, self.xpm_size, bias=False)   # real convolution
-        self.xpm_conv = ComplexConv1d(1, 1, self.xpm_size, bias=False)
+        self.xpm_conv1 = nn.Conv1d(1, 1, self.xpm_size, bias=False)   # real convolution
+        self.xpm_conv2 = nn.Conv1d(1, 1, self.xpm_size, bias=False)   # real convolution
         self.nn = ComplexLinear(len(self.index), 1, bias=False)      # no bias term
         nn.init.zeros_(self.nn.real.weight)
         nn.init.zeros_(self.nn.imag.weight)
-        nn.init.zeros_(self.xpm_conv.weight)
+        nn.init.zeros_(self.xpm_conv1.weight)
+        nn.init.zeros_(self.xpm_conv2.weight)
 
-    def zcv_filter(self, x):
+    def zcv_filter1(self, x):
         '''
         zeros center vmap filter.
         x: real [B, L, Nmodes] -> real [B, L -  xpm_size + 1, Nmodes]
@@ -654,9 +655,23 @@ class AmFoPBC(SymPBC):
         Nmodes = x.shape[-1]
         x = x.transpose(1,2)                            # x [B, Nmodes, L]
         x = x.reshape(-1, 1, x.shape[-1])               # x [B*Nmodes, 1, L]
-        # c0 = self.xpm_conv.weight[0,0, self.xpm_size//2]
-        # x = self.xpm_conv(x) - c0 * x[:,:,(self.overlaps//2):-(self.overlaps//2)]     # x [B*Nmodes, 1, L - xpm_size + 1]
-        x = self.xpm_conv(x)
+        c0 = self.xpm_conv1.weight[0,0, self.xpm_size//2]
+        x = self.xpm_conv1(x) - c0 * x[:,:,(self.overlaps//2):-(self.overlaps//2)]     # x [B*Nmodes, 1, L - xpm_size + 1]
+        x = x.reshape(B, Nmodes, x.shape[-1])          # x [B, Nmodes, L - xpm_size + 1]
+        x = x.transpose(1,2)                            # x [B, L - xpm_size + 1, Nmodes] 
+        return x
+    
+    def zcv_filter2(self, x):
+        '''
+        zeros center vmap filter.
+        x: real [B, L, Nmodes] -> real [B, L -  xpm_size + 1, Nmodes]
+        '''
+        B = x.shape[0]
+        Nmodes = x.shape[-1]
+        x = x.transpose(1,2)                            # x [B, Nmodes, L]
+        x = x.reshape(-1, 1, x.shape[-1])               # x [B*Nmodes, 1, L]
+        c0 = self.xpm_conv2.weight[0,0, self.xpm_size//2]
+        x = self.xpm_conv2(x) - c0 * x[:,:,(self.overlaps//2):-(self.overlaps//2)]     # x [B*Nmodes, 1, L - xpm_size + 1]
         x = x.reshape(B, Nmodes, x.shape[-1])          # x [B, Nmodes, L - xpm_size + 1]
         x = x.transpose(1,2)                            # x [B, L - xpm_size + 1, Nmodes] 
         return x
@@ -686,7 +701,7 @@ class AmFoPBC(SymPBC):
     
     def IXIXPM(self, E, P):
         x = E * torch.roll(E.conj(),1, dims=-1)                                   # x [B, L, Nmodes]
-        x = self.zcv_filter(x.real) + (1j)*self.zcv_filter(x.imag)                # x [B, L - xpm_size + 1, Nmodes]
+        x = self.zcv_filter2(x.real) + (1j)*self.zcv_filter2(x.imag)                # x [B, L - xpm_size + 1, Nmodes]
         x = E[...,(self.overlaps//2):-(self.overlaps//2),:].roll(1, dims=-1) * x  # x [B, L - xpm_size + 1, Nmodes] 
         return x * torch.sqrt(P[...,None,None])**3 * (1j)
               
@@ -717,11 +732,11 @@ class AmFoPBC(SymPBC):
         # SPM + IXPM
         if Nmodes == 1:
             power = torch.abs(signal.val)**2
-            phi = torch.sqrt(P[...,None,None])**3 * (self.C0 * power[:, (self.overlaps//2):-(self.overlaps//2),:]+ 2*self.zcv_filter(power))     # [B, L - xpm_size + 1, 1]
+            phi = torch.sqrt(P[...,None,None])**3 * (self.C0 * power[:, (self.overlaps//2):-(self.overlaps//2),:]+ 2*self.zcv_filter1(power))     # [B, L - xpm_size + 1, 1]
         elif Nmodes == 2:
             power = torch.abs(signal.val)**2
             x = 2*power + torch.roll(power, 1, dims=-1)               # x [B, L, Nmodes]
-            phi = torch.sqrt(P[...,None,None])**3 * (self.C0*power[:, (self.overlaps//2):-(self.overlaps//2),:].sum(dim=-1, keepdim=True) + 2*self.zcv_filter(x))
+            phi = torch.sqrt(P[...,None,None])**3 * (self.C0*power[:, (self.overlaps//2):-(self.overlaps//2),:].sum(dim=-1, keepdim=True) + 2*self.zcv_filter1(x))
         else:
             raise ValueError('signal.val.shape[-1] should be 1 or 2')
 
