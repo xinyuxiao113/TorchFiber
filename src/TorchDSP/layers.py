@@ -199,6 +199,9 @@ class ComplexConv1d(nn.Module):
         elif init == 'zeros':
             nn.init.zeros_(self.conv1d_r.weight)
             nn.init.zeros_(self.conv1d_i.weight)
+        elif init == 'central':
+            nn.init.constant_(self.conv1d_r.weight, 0.5)
+            nn.init.constant_(self.conv1d_i.weight, 0.5)
         else:
             raise ValueError('invalid init type {}'.format(init))
 
