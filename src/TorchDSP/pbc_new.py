@@ -131,7 +131,7 @@ class NNPredict(nn.Module):
     Attributes:
         Nmodes: int. Number of modes.
     '''
-    def __init__(self, hdim, Nmodes, pol_seperation=False, hidden_size=[2, 20], dropout=0.5, activation='leaky_relu', use_bias=True):
+    def __init__(self, hdim, Nmodes, pol_seperation=False, scale=0.01, hidden_size=[2, 20], dropout=0.5, activation='leaky_relu', use_bias=True):
         super(NNPredict, self).__init__()
         self.Nmodes = Nmodes
         self.hdim = hdim
@@ -154,6 +154,8 @@ class NNPredict(nn.Module):
 
         else:
             self.nn = self.get_nn()
+
+        self.scale = scale
     
     def get_nn(self):
         act = self.activations.get(self.activation, nn.ReLU())  # Default to ReLU if not found
@@ -183,9 +185,9 @@ class NNPredict(nn.Module):
         features: [batch, L, Nmodes, hdim]
         '''
         if self.pol_seperation and self.Nmodes == 2:
-            return torch.cat([self.r2c(self.nn_x(self.c2r(features[:,:,0,:]))), self.r2c(self.nn_y(self.c2r(features[:,:,0,:])))], dim=-1)  # [batch, L, Nmodes]
+            return self.scale * torch.cat([self.r2c(self.nn_x(self.c2r(features[:,:,0,:]))), self.r2c(self.nn_y(self.c2r(features[:,:,0,:])))], dim=-1)  # [batch, L, Nmodes]
         else:
-            return self.r2c(self.nn(self.c2r(features)))
+            return self.scale * self.r2c(self.nn(self.c2r(features)))
 
 
         
