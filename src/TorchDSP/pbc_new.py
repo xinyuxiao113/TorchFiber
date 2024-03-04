@@ -131,7 +131,7 @@ class NNPredict(nn.Module):
     Attributes:
         Nmodes: int. Number of modes.
     '''
-    def __init__(self, hdim, Nmodes, pol_seperation=False, hidden_size=[2, 10], dropout=0.5, activation='leaky_relu', use_bias=True):
+    def __init__(self, hdim, Nmodes, pol_seperation=False, hidden_size=[2, 20], dropout=0.5, activation='leaky_relu', use_bias=True):
         super(NNPredict, self).__init__()
         self.Nmodes = Nmodes
         self.hdim = hdim
@@ -304,7 +304,7 @@ class NNFoPBC(nn.Module):
             index_type: str. 'full', 'reduce-1', 'reduce-2'
             pol_seperation: bool. If True, predict x and y seperately.
     '''
-    def __init__(self, rho: float, L: int, Nmodes: int, index_type:str='reduce-2', pol_seperation:bool=False):
+    def __init__(self, rho: float, L: int, Nmodes: int, index_type:str='reduce-2', pol_seperation:bool=False, **kwargs):
         super(NNFoPBC, self).__init__()
         self.rho = rho
         self.L = L
@@ -313,7 +313,7 @@ class NNFoPBC(nn.Module):
         self.index_type = index_type
         self.pol_seperation = pol_seperation   
         self.nonlinear_features = NonlienarFeatures(Nmodes=Nmodes, rho=rho, L=L, index_type=index_type)
-        self.predict = NNPredict(self.nonlinear_features.hdim, Nmodes, pol_seperation=pol_seperation)
+        self.predict = NNPredict(self.nonlinear_features.hdim, Nmodes, pol_seperation=pol_seperation, **kwargs)
     
     def get_power(self, task_info, device):
         P = torch.tensor(1) if task_info == None else 10**(task_info[:,0]/10)/self.Nmodes   # [batch] or ()
@@ -395,7 +395,7 @@ class MySoPBC(nn.Module):
 
 
 class MultiStepPBC(nn.Module):
-    def __init__(self, steps=2, fo_type='SymFoPBC', **kwargs):
+    def __init__(self, steps=2, fo_type='FoPBC', **kwargs):
         '''
         L propto Rs^2
         '''
@@ -405,6 +405,7 @@ class MultiStepPBC(nn.Module):
             'FoPBC': FoPBC,
             'ERPFoPBC': ERPFoPBC,
             'AmFoPBC': AmFoPBC,
+            'NNFoPBC': NNFoPBC,
         }  
         module = fo_models[fo_type]
         self.HPBC_steps = nn.ModuleList([module(**kwargs) for i in range(steps)])
