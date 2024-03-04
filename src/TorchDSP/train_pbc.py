@@ -10,8 +10,9 @@ from src.TorchSimulation.receiver import  BER
 from .core import TorchSignal, TorchTime, dict_type
 from .pbc import models as model_set1
 from .nneq import models as model_set2
+from .pbc_new import models_new as model_set3
 
-models = {**model_set1, **model_set2}
+models = {**model_set1, **model_set2, **model_set3}
 
 optimizers = {
     "SGD": optim.SGD,
@@ -37,6 +38,10 @@ def MeanLoss(predict, truth):
 # MSE loss
 def MSE(predict, truth):
     return torch.mean(torch.abs(predict- truth)**2)
+
+# weighted loss  predict: [B, W, Nmodes], weight: [B]
+def weightedMSE(predict, truth, weight):
+    return torch.mean(torch.abs(predict- truth)**2 * weight[:,None, None])
 
 # define L1 norm of model parameters
 def L1(model, lamb=1e-4, device='cpu') -> torch.Tensor:

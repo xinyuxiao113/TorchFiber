@@ -77,10 +77,15 @@ class ComplexLinear(nn.Module):
     '''
     Complex linear layer.
     '''
-    def __init__(self, in_features, out_features, **kwargs):
+    def __init__(self, in_features, out_features, zero_init=True, **kwargs):
         super(ComplexLinear, self).__init__()
         self.real = nn.Linear(in_features, out_features, **kwargs)
         self.imag = nn.Linear(in_features, out_features, **kwargs)
+        
+        # 初始化最后一层的权重为零
+        if zero_init:
+            init.zeros_(self.real.weight)
+            init.zeros_(self.imag.weight)
 
     def forward(self, x):
         return torch.complex(self.real(x.real) - self.imag(x.imag),

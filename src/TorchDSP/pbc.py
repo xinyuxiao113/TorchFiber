@@ -142,7 +142,7 @@ class FoPBC(BasePBC):
         P = P.to(signal.val.device)
         features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
         features = features[..., (self.L//2):-(self.L//2),:,:]               # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
-        E = self.nn(features*torch.sqrt(P[...,None,None,None])**3)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
+        E = self.nn(features*torch.sqrt(P[...,None,None,None])**2)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
         E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
         E = E + signal.val[...,(self.L//2):-(self.L//2),:]                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
         return TorchSignal(val=E, t=TorchTime(signal.t.start + (self.L//2), signal.t.stop - (self.L//2), signal.t.sps))
@@ -199,7 +199,7 @@ class FoPBCNN(BasePBC):
         # complex -> real
         features = torch.cat([features.real, features.imag], dim=-1) # [batch, W-L, Nmodes, 2*len(S)] or [W-L, Nmodes, 2*len(S)]
         # Lienar layer
-        E = self.nn(features*torch.sqrt(P[...,None,None,None])**3)   #  [batch, W-L, Nmodes, 2] or [W-L, Nmodes, 2]
+        E = self.nn(features*torch.sqrt(P[...,None,None,None])**2)   #  [batch, W-L, Nmodes, 2] or [W-L, Nmodes, 2]
         # real -> complex
         E = torch.complex(E[...,0], E[...,1])                        # [batch, W-L, Nmodes] or [W-L, Nmodes]
 
@@ -364,8 +364,8 @@ class SoPBC(nn.Module):
         F1,F2 = self.nonlinear_features(E)                      # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
         F1 = F1[..., (self.overlaps//2):-(self.overlaps//2),:,:]              # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
         F2 = F2[..., (self.overlaps//2):-(self.overlaps//2),:,:]              # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
-        E1 = self.nn1(F1*torch.sqrt(P[...,None,None,None])**5)  # [batch, W-L, Nmodes, 1] or [W-L,Nmodes, 1]
-        E2 = self.nn2(F2*torch.sqrt(P[...,None,None,None])**5)  # [batch, W-L, Nmodes, 1] or [W-L,Nmodes, 1]
+        E1 = self.nn1(F1*torch.sqrt(P[...,None,None,None])**4)  # [batch, W-L, Nmodes, 1] or [W-L,Nmodes, 1]
+        E2 = self.nn2(F2*torch.sqrt(P[...,None,None,None])**4)  # [batch, W-L, Nmodes, 1] or [W-L,Nmodes, 1]
         Eo = self.pbc(signal, task_info).val + E1[...,0] + E2[...,0]  # [batch, W-L, Nmodes] or [W-L,Nmodes]
         return TorchSignal(val=Eo, t=TorchTime(t.start + (self.overlaps//2), t.stop - (self.overlaps//2), t.sps))
 
@@ -513,7 +513,7 @@ class SymFoPBC(SymPBC):
         P = P.to(signal.val.device)
         features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
         features = features[..., (self.L//2):-(self.L//2),:,:]               # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
-        E = self.nn(features*torch.sqrt(P[...,None,None,None])**3)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
+        E = self.nn(features*torch.sqrt(P[...,None,None,None])**2)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
         E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
         E = E + signal.val[...,(self.L//2):-(self.L//2),:]                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
         return TorchSignal(val=E, t=TorchTime(signal.t.start + (self.L//2), signal.t.stop - (self.L//2), signal.t.sps))
@@ -588,7 +588,7 @@ class SymFoPBCNN(SymPBC):
         # complex -> real
         features = torch.cat([features.real, features.imag], dim=-1) # [batch, W-L, Nmodes, 2*len(S)] or [W-L, Nmodes, 2*len(S)]
         # Lienar layer
-        E = self.nn(features*torch.sqrt(P[...,None,None,None])**3)   #  [batch, W-L, Nmodes, 2] or [W-L, Nmodes, 2]
+        E = self.nn(features*torch.sqrt(P[...,None,None,None])**2)   #  [batch, W-L, Nmodes, 2] or [W-L, Nmodes, 2]
         # real -> complex
         E = torch.complex(E[...,0], E[...,1])                        # [batch, W-L, Nmodes] or [W-L, Nmodes]
 
@@ -703,7 +703,7 @@ class AmFoPBC(SymPBC):
         x = E * torch.roll(E.conj(),1, dims=-1)                                   # x [B, L, Nmodes]
         x = self.zcv_filter2(x.real) + (1j)*self.zcv_filter2(x.imag)                # x [B, L - xpm_size + 1, Nmodes]
         x = E[...,(self.overlaps//2):-(self.overlaps//2),:].roll(1, dims=-1) * x  # x [B, L - xpm_size + 1, Nmodes] 
-        return x * torch.sqrt(P[...,None,None])**3 * (1j)
+        return x * torch.sqrt(P[...,None,None])**2 * (1j)
               
 
     
@@ -726,17 +726,17 @@ class AmFoPBC(SymPBC):
         # IFWM term
         features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
         features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:] # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
-        E = self.nn(features*torch.sqrt(P[...,None,None,None])**3)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
+        E = self.nn(features*torch.sqrt(P[...,None,None,None])**2)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
         E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
         
         # SPM + IXPM
         if Nmodes == 1:
             power = torch.abs(signal.val)**2
-            phi = torch.sqrt(P[...,None,None])**3 * (self.C0 * power[:, (self.overlaps//2):-(self.overlaps//2),:]+ 2*self.zcv_filter1(power))     # [B, L - xpm_size + 1, 1]
+            phi = torch.sqrt(P[...,None,None])**2 * (self.C0 * power[:, (self.overlaps//2):-(self.overlaps//2),:]+ 2*self.zcv_filter1(power))     # [B, L - xpm_size + 1, 1]
         elif Nmodes == 2:
             power = torch.abs(signal.val)**2
             x = 2*power + torch.roll(power, 1, dims=-1)               # x [B, L, Nmodes]
-            phi = torch.sqrt(P[...,None,None])**3 * (self.C0*power[:, (self.overlaps//2):-(self.overlaps//2),:].sum(dim=-1, keepdim=True) + 2*self.zcv_filter1(x))
+            phi = torch.sqrt(P[...,None,None])**2 * (self.C0*power[:, (self.overlaps//2):-(self.overlaps//2),:].sum(dim=-1, keepdim=True) + 2*self.zcv_filter1(x))
         else:
             raise ValueError('signal.val.shape[-1] should be 1 or 2')
 
@@ -812,11 +812,11 @@ class AmSymFoPBC(SymPBC):
         # IFWM term
         features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
         features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:] # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
-        E = self.nn(features*torch.sqrt(P[...,None,None,None])**3)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
+        E = self.nn(features*torch.sqrt(P[...,None,None,None])**2)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
         E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
 
             
-        E = E + signal.val[...,(self.overlaps//2):-(self.overlaps//2),:]*torch.exp(1j*phi)                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        E = E + signal.val[...,(self.overlaps//2):-(self.overlaps//2),:]*torch.exp(1j*phi*P[...,None,None])                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
         return TorchSignal(val=E, t=TorchTime(signal.t.start + (self.overlaps//2), signal.t.stop - (self.overlaps//2), signal.t.sps))
     
 
@@ -884,7 +884,7 @@ class FixAmSymFoPBC(SymPBC):
         # IFWM term
         features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
         features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:] # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
-        E = self.nn(features*torch.sqrt(P[...,None,None,None])**3)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
+        E = self.nn(features*torch.sqrt(P[...,None,None,None])**2)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
         E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
 
         C = self.C_real + (1j)*self.C_imag
@@ -917,7 +917,7 @@ class ConvPBC(AmSymFoPBC):
         # FWM triplets
         features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
         features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:]               # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
-        E = self.nn(features*torch.sqrt(P[...,None,None,None])**3)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
+        E = self.nn(features*torch.sqrt(P[...,None,None,None])**2)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
         E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
         
         # FWM convolution 
@@ -992,7 +992,7 @@ class RoSymFoPBC(SymPBC):
         P = P.to(signal.val.device)
         features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
         features = features[..., (self.L//2):-(self.L//2),:,:]               # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
-        E = self.nn(features*torch.sqrt(P[...,None,None,None])**3)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
+        E = self.nn(features*torch.sqrt(P[...,None,None,None])**2)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
         E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
         U = signal.val[...,(self.L//2):-(self.L//2),:]
         E = U * torch.exp(1j * E/U)                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
@@ -1056,7 +1056,7 @@ class AdaptSymFoPBC(SymPBC):
 
         features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
         features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:]               # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
-        E = self.nn(features*torch.sqrt(P[...,None,None,None])**3 * self.adapt(P[...,None,None,None]))           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
+        E = self.nn(features*torch.sqrt(P[...,None,None,None])**2 * self.adapt(P[...,None,None,None]))           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
         E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
         E = E + signal.val[...,(self.overlaps//2):-(self.overlaps//2),:]*torch.exp(1j*phi)                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
         return TorchSignal(val=E, t=TorchTime(signal.t.start + (self.overlaps//2), signal.t.stop - (self.overlaps//2), signal.t.sps))
@@ -1108,8 +1108,8 @@ class MixAmSymFoPBC(SymPBC):
 
         features = self.nonlinear_features(signal.val)                                   # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
         features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:]             # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
-        E1 = self.nn1(features*torch.sqrt(P[...,None,None,None])**3)[...,0]          # [batch, W-L, Nmodes] or [W-L, Nmodes]
-        E2 = self.nn2(features*torch.sqrt(P[...,None,None,None])**3)[...,0]      # [batch, W-L, Nmodes] or [W-L, Nmodes]   
+        E1 = self.nn1(features*torch.sqrt(P[...,None,None,None])**2)[...,0]          # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        E2 = self.nn2(features*torch.sqrt(P[...,None,None,None])**2)[...,0]      # [batch, W-L, Nmodes] or [W-L, Nmodes]   
                                                     
         U = signal.val[...,(self.L//2):-(self.L//2),:]
         E = U*torch.exp(1j*E1/(U + 1e-6)) + (1j)*E2                    # [batch, W-L, Nmodes] or [W-L, Nmodes]
@@ -1151,8 +1151,8 @@ class NNSymFoPBC(SymPBC):
         features = self.nonlinear_features(signal.val)                                   # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
         features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:]             # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
         rate = torch.sigmoid(self.mask)                                     # [len(S)]
-        E1 = self.nn(features*torch.sqrt(P[...,None,None,None])**3*rate)[...,0]          # [batch, W-L, Nmodes] or [W-L, Nmodes]
-        E2 = self.nn(features*torch.sqrt(P[...,None,None,None])**3*(1-rate))[...,0]      # [batch, W-L, Nmodes] or [W-L, Nmodes]   
+        E1 = self.nn(features*torch.sqrt(P[...,None,None,None])**2*rate)[...,0]          # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        E2 = self.nn(features*torch.sqrt(P[...,None,None,None])**2*(1-rate))[...,0]      # [batch, W-L, Nmodes] or [W-L, Nmodes]   
                                                     
         U = signal.val[...,(self.L//2):-(self.L//2),:]
         E = U*torch.exp(1j*E1/U) + (1j)*E2                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
@@ -1261,8 +1261,8 @@ class MySOPBC(nn.Module):
         P = P.to(E.device)
 
         E1_features = self.triplets(E, E, E)  # [B, L, Nmodes, hdim]
-        E1 = self.nn[0](E1_features*torch.sqrt(P[...,None,None,None])**3)[...,0]  # [batch, L, Nmodes]
-        E1_mid = self.nn[1](E1_features*torch.sqrt(P[...,None,None,None])**3)[...,0]  # [batch, L, Nmodes]
+        E1 = self.nn[0](E1_features*torch.sqrt(P[...,None,None,None])**2)[...,0]  # [batch, L, Nmodes]
+        E1_mid = self.nn[1](E1_features*torch.sqrt(P[...,None,None,None])**2)[...,0]  # [batch, L, Nmodes]
 
         F1 = self.triplets(E1_mid, E, E) # [B, L, Nmodes, hdim]
         F2 = self.triplets(E, E, E1_mid) # [B, L, Nmodes, hdim]
