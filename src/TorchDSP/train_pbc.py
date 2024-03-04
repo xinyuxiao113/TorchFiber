@@ -28,20 +28,20 @@ optimizers = {
 
 
 # Multi-Task loss
-def MTLoss(predict, truth):
+def MTLoss(predict, truth, weight=None):
     return torch.mean(torch.log(torch.mean(torch.abs(predict - truth)**2, dim=(-2,-1)))) 
 
 # log-MSE loss
-def MeanLoss(predict, truth):
+def MeanLoss(predict, truth, weight=None):
     return torch.log(torch.mean(torch.abs(predict- truth)**2))
 
 # MSE loss
-def MSE(predict, truth):
+def MSE(predict, truth, weight=None):
     return torch.mean(torch.abs(predict- truth)**2)
 
 # weighted loss  predict: [B, W, Nmodes], weight: [B]
 def weightedMSE(predict, truth, weight):
-    return torch.mean(torch.abs(predict- truth)**2 * weight[:,None, None])
+    return torch.sum(torch.abs(predict- truth)**2 * weight[:,None, None])
 
 # define L1 norm of model parameters
 def L1(model, lamb=1e-4, device='cpu') -> torch.Tensor:
@@ -106,22 +106,26 @@ def train_model(config: dict):
     if config['loss_type'] == 'MT': loss_fn = MTLoss
     elif config['loss_type'] == 'Mean': loss_fn = MeanLoss
     elif config['loss_type'] == 'MSE': loss_fn = MSE
+    elif config['loss_type'] == 'WMSE': loss_fn = weightedMSE
     else: raise ValueError('loss_type should be MT or Mean')
     
     epoch0 = config['train epoch'] + 1 if 'train epoch' in config.keys() else 1
 
     for epoch in range(epoch0, epoch1 + 1):
         train_loss = 0
+        weight = 1
         for i in range(config['batchs']):
             # The ith batch training data
             signal = train_signal.get_slice(Ls, config['tbpl']*i + config['train_discard']).to(device)
             truth = train_truth.get_slice(Ls, config['tbpl']*i + config['train_discard']).to(device)
             train_z = train_z.to(device)
+            P = 10**(train_z[:,0]/10)   # Power
+            weight = P / torch.sum(P)
             for j in range(config['iters_per_batch']):
                 t0 = time.time()
                 predict = net(signal, train_z)
                 L1_loss = L1(net, config['lamb'], device=device)
-                fit_loss = loss_fn(predict.val, truth.val[...,predict.t.start:predict.t.stop,:])
+                fit_loss = loss_fn(predict.val, truth.val[...,predict.t.start:predict.t.stop,:], weight)
                 loss = fit_loss + L1_loss
                 optimizer.zero_grad()
                 loss.backward()
@@ -143,7 +147,7 @@ def train_model(config: dict):
         signal = train_signal.get_slice(Ls, config['tbpl']*config['batchs'] + config['train_discard']).to(device)  
         truth = train_truth.get_slice(Ls, config['tbpl']*config['batchs'] + config['train_discard']).to(device)
         predict = net(signal, train_z)
-        val_loss = loss_fn(predict.val, truth.val[...,predict.t.start:predict.t.stop,:])
+        val_loss = loss_fn(predict.val, truth.val[...,predict.t.start:predict.t.stop,:], weight)
         val_loss_list.append(val_loss.item())
 
         # write to tensorboard and print

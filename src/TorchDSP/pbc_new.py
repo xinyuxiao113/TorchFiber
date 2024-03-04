@@ -30,7 +30,7 @@ class NonlienarFeatures(nn.Module):
         elif self.index_type == 'reduce-1':
             return (abs(m*n) <= self.rho * self.L //2) and (n >= m)
         elif self.index_type == 'reduce-2':
-            return (abs(m*n) <= self.rho * self.L //2) and (n > abs(m))
+            return (abs(m*n) <= self.rho * self.L //2) and (n >= abs(m))
         
     def get_index(self):
         '''
@@ -328,6 +328,7 @@ class NNFoPBC(nn.Module):
         features = self.nonlinear_features(E, E, E)  # [batch, L, Nmodes, hdim]
         E = E + self.predict(features* torch.sqrt(P[...,None, None, None])**3) / torch.sqrt(P[...,None, None])   # [batch, L, Nmodes]
         return TorchSignal(val=E[...,(self.overlaps//2):-(self.overlaps//2),:], t=TorchTime(signal.t.start + (self.overlaps//2), signal.t.stop - (self.overlaps//2), signal.t.sps))
+
 
 
 
