@@ -1058,7 +1058,7 @@ class AdaptSymFoPBC(SymPBC):
         features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:]               # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
         E = self.nn(features*torch.sqrt(P[...,None,None,None])**2 * self.adapt(P[...,None,None,None]))           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
         E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
-        E = E + signal.val[...,(self.overlaps//2):-(self.overlaps//2),:]*torch.exp(1j*phi)                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        E = E + signal.val[...,(self.overlaps//2):-(self.overlaps//2),:]*torch.exp(1j*phi*P[...,None,None] * self.adapt(P[...,None,None]))                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
         return TorchSignal(val=E, t=TorchTime(signal.t.start + (self.overlaps//2), signal.t.stop - (self.overlaps//2), signal.t.sps))
 
 
