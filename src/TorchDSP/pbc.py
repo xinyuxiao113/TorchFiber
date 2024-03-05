@@ -1048,17 +1048,20 @@ class AdaptSymFoPBC(SymPBC):
             Nmodes = 2:
                 O_{b,k,i} = gamma P0^{3/2} * sum_{m,n} (E_{b, k+n, i} E_{b, k+m+n, i}^* +  E_{b, k+n, -i} E_{b, k+m+n, -i}^*) E_{b, k+m, i} C_{m,n}
         '''
-        P = torch.tensor(1) if task_info == None else 10**(task_info[:,0]/10)/signal.val.shape[-1]   # [batch] or ()
+        Pdm = torch.tensor(1) if task_info == None else task_info[:,0]
+        P =  10**(Pdm/10)/signal.val.shape[-1]   # [batch] or ()
+        Pdm = Pdm.to(signal.val.device)
         P = P.to(signal.val.device)
+        
 
         x = signal.val.transpose(1,2)  # x [B, M, L]
         phi = self.xpm_conv(torch.abs(x)**2).transpose(1,2)      # [B, L - xpm_size + 1, M]
 
         features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
         features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:]               # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
-        E = self.nn(features*torch.sqrt(P[...,None,None,None])**2 * self.adapt(P[...,None,None,None]))           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
+        E = self.nn(features*torch.sqrt(P[...,None,None,None])**2 * self.adapt(Pdm[...,None,None,None]))           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
         E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
-        E = E + signal.val[...,(self.overlaps//2):-(self.overlaps//2),:]*torch.exp(1j*phi*P[...,None,None] * self.adapt(P[...,None,None]))                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        E = E + signal.val[...,(self.overlaps//2):-(self.overlaps//2),:]*torch.exp(1j*phi*P[...,None,None] * self.adapt(Pdm[...,None,None]))                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
         return TorchSignal(val=E, t=TorchTime(signal.t.start + (self.overlaps//2), signal.t.stop - (self.overlaps//2), signal.t.sps))
 
 

@@ -5,6 +5,7 @@ Train model.
 import pickle , matplotlib.pyplot as plt, torch, numpy as np, argparse, time, os
 from torch.utils.tensorboard.writer import SummaryWriter
 from torch import optim
+from torch.optim.lr_scheduler import StepLR
 from .dataloader import signal_dataset, get_k_batch, get_signals
 from src.TorchSimulation.receiver import  BER
 from .core import TorchSignal, TorchTime, dict_type
@@ -97,6 +98,12 @@ def train_model(config: dict):
     else: raise ValueError('optimizer not found')
     if 'optimizer' in config.keys(): optimizer.load_state_dict(config['optimizer'])
 
+    # define schedule
+    if "scheduler" in config.keys():
+        scheduler = optim.lr_scheduler.__dict__[config['scheduler']](optimizer, **config['scheduler info'])
+    else:
+        scheduler = StepLR(optimizer, step_size=50, gamma=0.1)  # 每10个epoch，将学习率缩小为原来的0.1倍
+
     # define batch size
     Ls = net.overlaps + config['tbpl']
     train_loss_list = []
@@ -136,6 +143,8 @@ def train_model(config: dict):
             train_loss += fit_loss.item() # type: ignore
             writer.add_scalar('Loss/batch_train_loss', fit_loss.item(), (epoch-1)*config['batchs'] + i)  # type: ignore
             writer.add_scalar('Loss/batch_L1_loss', L1_loss.item(), (epoch-1)*config['batchs'] + i)      # type: ignore
+
+        scheduler.step()
 
         print('\n' + '#' * 20 + '\n', flush=True)
         train_loss /= config['batchs']
