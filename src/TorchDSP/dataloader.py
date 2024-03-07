@@ -2,6 +2,18 @@ import pickle, torch, numpy as np, time, random, os
 from .core import TorchInput, TorchSignal, TorchTime
 from torch.utils.data import Dataset
 
+def metric_for(method='CDC',info='Qsq', Nmodes=2, Nch=1, Rs=20, P=0, discard=10000):
+    '''
+    Get baselines metric from Qfactor dictionary.
+    Qfactor saved at _outputs/Qfactor/Nmodes{Nmodes}/{method}.pkl
+    method: 'CDC' or 'DBP stps=i' (i=1,2,..,10,20,40)
+    discard: 100, 1000, 10000, 20000
+    '''
+    dic, code = pickle.load(open(f'_outputs/Qfactor/Nmodes{Nmodes}/{method}.pkl','rb'))
+    dis = torch.mean(torch.abs(code[:,[0,2,3]] - torch.tensor([P, Rs*2e9,  Nch])), dim=1)
+    k = torch.where(dis < 0.1)[0]
+    return dic[f'BER from {discard}th symb'][method][info][k]
+
 
 def get_data(path):
     '''
@@ -17,16 +29,16 @@ def get_data(path):
 def get_k(Nch, Rs, P, train_t, sps=2) -> list[int]:
     '''
         Return index of batch in train_t infomation with number of channels = Nch, symbol rate = Rs, Power=P.
-            train_t: [B, 4].
+            train_t: [B, 4].  [P, Fi, Fs, Nch]
     '''
     dis = torch.mean(torch.abs(train_t[:,[0,2,3]] - torch.tensor([P, Rs*sps*1e9,  Nch])), dim=1)
-    k = int(torch.argmin(dis))
-    if dis[k]  > 0.1:
+    k = torch.where(dis < 0.1)[0]
+    if len(k) == 0:
         print('No matched data')
-        return []
+        raise ValueError
     else:
-        print('match batch: ', k)
-        return [k]
+        # print('match batch: ', k)
+        return k.tolist()
 
 def get_k_batch(Nch, Rs, train_t) -> torch.Tensor:
     '''

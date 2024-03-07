@@ -4,6 +4,70 @@ from .core import TorchSignal, TorchTime
 from .layers import MLP, ComplexLinear, complex_weight_composition, ComplexConv1d, Id, StepFunction
 
 
+class GRUandPBC(nn.Module):
+    def __init__(self,Nmodes=1, L=400, window_size=25, fo_type='FoPBC', xi=0.5):
+        super(GRUandPBC, self).__init__()
+        Nq = (L + 1 - window_size) // 2
+        self.f = BiGRUPBC(Nmodes, 2, 40, Nq, window_size)
+        if fo_type == 'FoPBC':
+            self.pbc = FoPBC(1, L, Nmodes)
+        elif fo_type == 'AmFoPBC':
+            self.pbc = AmFoPBC(1, L, Nmodes)
+        else:
+            raise ValueError('fo_type should be FoPBC or AmFoPBC')
+        self.xi = xi
+        assert self.f.overlaps == self.pbc.overlaps
+        self.overlaps = self.pbc.overlaps
+
+    
+    def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None) -> TorchSignal:
+        A = self.f(signal, task_info)
+        B = self.pbc(signal, task_info)
+        return TorchSignal(val=self.xi*A.val + (1-self.xi)*B.val, t=A.t)
+
+class BiGRUPBC(nn.Module):
+    def __init__(self, Nmodes=1, num_layers=1, hdim=20, Nq=100, window_size=25):
+        super(BiGRUPBC, self).__init__()
+        self.hdim = hdim
+        self.Nmodes = Nmodes
+        self.num_layers = num_layers
+        self.GRU = nn.GRU(input_size=2, hidden_size=hdim, num_layers=num_layers, batch_first=True, bidirectional=True)
+        self.Nq = Nq
+        self.window_size = window_size
+        self.overlaps = 2*self.Nq + self.window_size - 1
+
+        self.act = nn.LeakyReLU()
+
+        self.DNN = nn.Sequential(
+            nn.Linear(2*self.hdim*self.window_size, 2),
+            self.act,
+            nn.Linear(2, 10),
+            self.act,
+            nn.Dropout(0.2),
+            nn.Linear(10, 2),
+        )
+    
+    def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None) -> TorchSignal:
+       # E [batch, W, Nmodes]
+        E = signal.val
+        P = torch.tensor(1) if task_info == None else 10**(task_info[:,0]/10)/self.Nmodes   # [batch] or ()
+
+        batch,W =  E.shape[0], E.shape[1]
+        E = E.permute(0,2,1)  # [batch, Nmodes, W]
+        E = E.reshape(-1, E.shape[-1]) # [batch*Nmodes, W, 1]
+        E = torch.stack([E.real, E.imag], dim=-1) # [batch*Nmodes, W, 2]
+        E, _ = self.GRU(E) # [batch*Nmodes, W, 2*hdim]
+        E = E.reshape(batch, self.Nmodes,W, 2*self.hdim) # [batch, Nmodes, W, 2*hdim]
+        E = E[:,:,self.Nq:-self.Nq,:] # [batch, Nmodes, W-2*Nq, 2*hdim]
+        E = E.unfold(2, self.window_size, 1) # [batch, Nmodes, W-2*Nq-window_size+1, 2*hdim, window_size]
+        E = E.reshape(batch, self.Nmodes, -1, 2*self.hdim*self.window_size) # [batch, Nmodes, W-2*Nq-window_size+1, 2*hdim*window_size]
+        E = self.DNN(E)  # [batch, Nmodes, W-2*Nq-window_size+1, 2]
+        E = E[...,0] + E[...,1]*1j # [batch, Nmodes, W-2*Nq-window_size+1]
+        E = E.permute(0,2,1)    # [batch, W-2*Nq-window_size+1, Nmodes]
+        E = signal.val[:,self.overlaps//2:-(self.overlaps//2),:] + E * P[:,None,None]
+        return TorchSignal(val=E, t=TorchTime(signal.t.start + (self.overlaps//2), signal.t.stop - (self.overlaps//2), signal.t.sps))
+    
+
 
 class NonlienarFeatures(nn.Module):
     '''
@@ -233,6 +297,8 @@ class FoPBC(nn.Module):
             return {'index': self.nonlinear_features.index, 'C': self.predict.fc.real.weight.data.squeeze() + 1j*self.predict.fc.imag.weight.data.squeeze()} 
 
     def scatter_C(self, x, y, values, s=3, vmax=-1.5, vmin=-5, title='example'):
+        x = np.array(x)
+        y = np.array(y)
         if self.index_type == 'full':
             plt.scatter(x, y, c=values, cmap='viridis', s=s, vmax=vmax, vmin=vmin)  # `cmap`指定颜色映射，`s`指定点的大小
         elif self.index_type == 'reduce-1':
@@ -330,8 +396,6 @@ class NNFoPBC(nn.Module):
         return TorchSignal(val=E[...,(self.overlaps//2):-(self.overlaps//2),:], t=TorchTime(signal.t.start + (self.overlaps//2), signal.t.stop - (self.overlaps//2), signal.t.sps))
 
 
-
-
 class AmFoPBC(FoPBC):
     '''
         Add-Multiply  first order PBC.
@@ -342,7 +406,7 @@ class AmFoPBC(FoPBC):
             index_type: str. 'full', 'reduce-1', 'reduce-2'
             pol_seperation: bool. If True, predict x and y seperately.
     '''
-    def __init__(self, rho: float, L: int, Nmodes: int, index_type:str='reduce-2', pol_seperation:bool=False):
+    def __init__(self, rho: float, L: int, Nmodes: int=1, index_type:str='reduce-2', pol_seperation:bool=False):
         super(AmFoPBC, self).__init__(rho, L, Nmodes, index_type, pol_seperation)
     
     def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None) -> TorchSignal:
@@ -353,6 +417,32 @@ class AmFoPBC(FoPBC):
         features = self.nonlinear_features(E, E, E)  # [batch, L, Nmodes, hdim]
         M = self.predict(features * mask) * P[...,None, None]  # [batch, L, Nmodes]
         A = self.predict(features * (1-mask)) * P[...,None, None]  # [batch, L, Nmodes]
+        E = E * torch.exp(M / E) + A  # [batch, L, Nmodes]
+        return TorchSignal(val=E[...,(self.overlaps//2):-(self.overlaps//2),:], t=TorchTime(signal.t.start + (self.overlaps//2), signal.t.stop - (self.overlaps//2), signal.t.sps))
+
+
+class MixAmFoPBC(FoPBC):
+    '''
+        Add-Multiply  first order PBC.
+        Attributes:
+            rho: float. Nonlinear parameter.
+            L: int. Length of signal.
+            Nmodes: int. Number of modes.
+            index_type: str. 'full', 'reduce-1', 'reduce-2'
+            pol_seperation: bool. If True, predict x and y seperately.
+    '''
+    def __init__(self, rho: float, L: int, Nmodes: int=1, index_type:str='reduce-2', pol_seperation:bool=False):
+        super(MixAmFoPBC, self).__init__(rho, L, Nmodes, index_type, pol_seperation)
+        self.mask = nn.Parameter(self.nonlinear_features.get_mask()*4 - 2, requires_grad=False)
+    
+    def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None) -> TorchSignal:
+        E = signal.val             # [batch, W, Nmodes]
+        P = self.get_power(task_info, E.device)   # [batch,]
+
+        features = self.nonlinear_features(E, E, E)  # [batch, L, Nmodes, hdim]
+        weight = torch.sigmoid(self.mask)
+        M = self.predict(features * weight) * P[...,None, None]  # [batch, L, Nmodes]
+        A = self.predict(features * (1-weight)) * P[...,None, None]  # [batch, L, Nmodes]
         E = E * torch.exp(M / E) + A  # [batch, L, Nmodes]
         return TorchSignal(val=E[...,(self.overlaps//2):-(self.overlaps//2),:], t=TorchTime(signal.t.start + (self.overlaps//2), signal.t.stop - (self.overlaps//2), signal.t.sps))
 
@@ -398,7 +488,7 @@ class MySoPBC(nn.Module):
 
 
 class MultiStepPBC(nn.Module):
-    def __init__(self, steps=2, fo_type='FoPBC', **kwargs):
+    def __init__(self, steps=2, fo_type='FoPBC', details={"step 0":{}, "step 1":{}}):
         '''
         L propto Rs^2
         '''
@@ -411,7 +501,7 @@ class MultiStepPBC(nn.Module):
             'NNFoPBC': NNFoPBC,
         }  
         module = fo_models[fo_type]
-        self.HPBC_steps = nn.ModuleList([module(**kwargs) for i in range(steps)])
+        self.HPBC_steps = nn.ModuleList([module(**details[f"step {i}"]) for i in range(steps)])
         self.overlaps = sum([model.overlaps for model in self.HPBC_steps]) # type: ignore
 
     def forward(self, signal: TorchSignal, task_info: Union[torch.Tensor,None] = None):
@@ -426,12 +516,15 @@ class MultiStepPBC(nn.Module):
     
 
 models_new = {
+            'GRUandPBC': GRUandPBC,
             'FoPBC(new)': FoPBC,
             'ERPFoPBC(new)': ERPFoPBC,
             'NNFoPBC(new)': NNFoPBC,
             'AmFoPBC(new)': AmFoPBC,
+            'MixAmFoPBC(new)': MixAmFoPBC,
             'MultiStepPBC(new)': MultiStepPBC,
             'MySoPBC(new)': MySoPBC,
+            'BiGRUPBC': BiGRUPBC,
         }  
 
 if __name__ == '__main__':
@@ -453,12 +546,14 @@ if __name__ == '__main__':
     print(train_y.shape)
     print(train_x.shape)
     
-    signal = train_signal.get_slice(1000, 0)
+    signal = train_signal.get_slice(2000, 0)
     # net = FoPBC(1, 50, 2)
     # net = AmFoPBC(1, 50, 2)
     # net = MySoPBC(1, 50, 2)
     # net = ERPFoPBC(1, 50, 2)
-    net = NNFoPBC(1, 50, 2)
+    # net = NNFoPBC(1, 50, 2)
+    net = GRUandPBC(2, 200, 25)
+    # net = BiGRUPBC(1,1,20,10, 25)
     print(net)
     net = net.to(device)
     signal_out = net(signal, train_z)
