@@ -55,7 +55,7 @@ def get_k_batch(Nch, Rs, train_t) -> torch.Tensor:
         return k
     
 
-def get_signals(path: str, Nch: int, Rs: int, Pch=None,  device='cpu'):
+def get_signals(path: str, Nch: int, Rs: int, Pch=None,  device='cpu', batch_max=10000):
     '''
         Get single mode signals with special Nch and Rs and Pch. 
 
@@ -68,6 +68,7 @@ def get_signals(path: str, Nch: int, Rs: int, Pch=None,  device='cpu'):
             k = k + get_k(Nch, Rs, p, test_t)
     else:
         k = get_k_batch(Nch, Rs, test_t)
+    k = k[:batch_max]
     test_signal = TorchSignal(test_y[k], TorchTime(0,0,1)).to(device)
     test_truth = TorchSignal(test_x[k], TorchTime(0,0,1)).to(device)
     test_z = test_t[k].to(device) 
