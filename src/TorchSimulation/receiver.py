@@ -146,7 +146,7 @@ def SER(y, truth):
     return torch.mean(er * 1.0, dim=-2).to('cpu').numpy(), z
 
 
-def _BER(y: torch.Tensor, truth: torch.Tensor, M=16, eval_range=(0,-1)):
+def _BER(y: torch.Tensor, truth: torch.Tensor, M=16, eval_range=(0,None)):
     '''
         y: [Nsymb,Nmodes]  or [batch, Nsymb,Nmodes]   L2(y) ~ 1
         truth: [Nsymb, Nmodes] or [batch, Nsymb,Nmodes]   L2(truth) ~ 1
@@ -180,10 +180,10 @@ def _BER(y: torch.Tensor, truth: torch.Tensor, M=16, eval_range=(0,-1)):
 
     ber = torch.mean((br!=bt)*1.0, dim=-2)
 
-    return {'BER':ber.numpy(), 'SER':ser, 'Qsq':Qsq(ber.numpy()), 'SNR': SNR_fn(y, truth).numpy()}
+    return {'BER':ber.cpu().numpy(), 'SER':ser, 'Qsq':Qsq(ber.cpu().numpy()), 'SNR': SNR_fn(y, truth).cpu().numpy()}
 
 
-def BER(y: torch.Tensor, truth: torch.Tensor, M=16, eval_range=(0,-1), batch=-1):
+def BER(y: torch.Tensor, truth: torch.Tensor, M=16, eval_range=(0,None), batch=-1):
     '''
         Calculate BER.
             Input:
@@ -191,10 +191,12 @@ def BER(y: torch.Tensor, truth: torch.Tensor, M=16, eval_range=(0,-1), batch=-1)
                 truth: [Nsymb, Nmodes] or [batch, Nsymb,Nmodes]   L2(truth) ~ 1
                 M: modulation order.    
                 eval_range: range of symbols to evaluate.
-                batch: batch size. -1 means all.   
+                batch: batch size. -1 means all.   In order to prevent from OOM.
             Output: 
                 metric, [Nbits, Nmodes]
     '''
+    if y.ndim == 2 and batch!= -1: raise(ValueError)
+
     batch = y.shape[0] if batch == -1 else batch
     res = []
     for i in range(0, y.shape[0], batch):

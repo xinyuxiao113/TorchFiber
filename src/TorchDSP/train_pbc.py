@@ -6,6 +6,7 @@ import pickle , matplotlib.pyplot as plt, torch, numpy as np, argparse, time, os
 from torch.utils.tensorboard.writer import SummaryWriter
 from torch import optim
 from torch.optim.lr_scheduler import StepLR
+from functools import partial
 from .dataloader import signal_dataset, get_k_batch, get_signals
 from src.TorchSimulation.receiver import  BER
 from .core import TorchSignal, TorchTime, dict_type
@@ -28,24 +29,35 @@ optimizers = {
 }
 
 
+# 4-order loss: we hope the model concentrate on the large error signal.  (reduce the gap of loss function and BER)
+# when the error is small, we should not learn the error, because the error is purely guasisan noise.
+mus = 10**(np.linspace(-3, np.log10(0.31622776), 200))
+
+def loss3(predict, truth, weight=None, mu=0.05):
+    return torch.mean(torch.max(torch.tensor(mu), torch.abs(predict - truth))**2)
+
+def loss4(predict, truth, weight=None, mu=0):
+    return torch.mean(torch.abs(predict - truth)**4)
+
+
 # Multi-Task loss
-def MTLoss(predict, truth, weight=None):
+def MTLoss(predict, truth, weight=None, mu=0):
     return torch.mean(torch.log(torch.mean(torch.abs(predict - truth)**2, dim=(-2,-1)))) 
 
 # log-MSE loss
-def MeanLoss(predict, truth, weight=None):
+def MeanLoss(predict, truth, weight=None, mu=0):
     return torch.log(torch.mean(torch.abs(predict- truth)**2))
 
 # MSE loss
-def MSE(predict, truth, weight=None):
+def MSE(predict, truth, weight=None, mu=0):
     return torch.mean(torch.abs(predict- truth)**2)
 
 # weighted loss  predict: [B, W, Nmodes], weight: [B]
-def weightedMSE(predict, truth, weight):
+def weightedMSE(predict, truth, weight, mu=0):
     return torch.sum(torch.abs(predict- truth)**2 * weight[:,None, None])
 
 # define L1 norm of model parameters
-def L1(model, lamb=1e-4, device='cpu') -> torch.Tensor:
+def L1(model, lamb=1e-4, device='cpu', mu=0) -> torch.Tensor:
     loss = torch.tensor(0., device=device)
     for param in model.parameters():
         loss += torch.norm(param, p=1)
@@ -102,7 +114,7 @@ def train_model(config: dict):
     if "scheduler" in config.keys():
         scheduler = optim.lr_scheduler.__dict__[config['scheduler']](optimizer, **config['scheduler info'])
     else:
-        scheduler = StepLR(optimizer, step_size=50, gamma=0.1)  # 每10个epoch，将学习率缩小为原来的0.1倍
+        scheduler = StepLR(optimizer, step_size=50, gamma=1)  # 每10个epoch，将学习率缩小为原来的1倍
 
     # define batch size
     Ls = net.overlaps + config['tbpl']
@@ -114,6 +126,8 @@ def train_model(config: dict):
     elif config['loss_type'] == 'Mean': loss_fn = MeanLoss
     elif config['loss_type'] == 'MSE': loss_fn = MSE
     elif config['loss_type'] == 'WMSE': loss_fn = weightedMSE
+    elif config['loss_type'] == 'loss3': loss_fn = loss3
+    elif config['loss_type'] == 'loss4': loss_fn = loss4
     else: raise ValueError('loss_type should be MT or Mean')
     
     epoch0 = config['train epoch'] + 1 if 'train epoch' in config.keys() else 1
@@ -121,6 +135,7 @@ def train_model(config: dict):
     for epoch in range(epoch0, epoch1 + 1):
         train_loss = 0
         weight = 1
+        loss_func = partial(loss_fn, mu=mus[epoch])
         for i in range(config['batchs']):
             # The ith batch training data
             signal = train_signal.get_slice(Ls, config['tbpl']*i + config['train_discard']).to(device)
@@ -132,7 +147,7 @@ def train_model(config: dict):
                 t0 = time.time()
                 predict = net(signal, train_z)
                 L1_loss = L1(net, config['lamb'], device=device)
-                fit_loss = loss_fn(predict.val, truth.val[...,predict.t.start:predict.t.stop,:], weight)
+                fit_loss = loss_func(predict.val, truth.val[...,predict.t.start:predict.t.stop,:], weight)
                 loss = fit_loss + L1_loss
                 optimizer.zero_grad()
                 loss.backward()
@@ -156,7 +171,7 @@ def train_model(config: dict):
         signal = train_signal.get_slice(Ls, config['tbpl']*config['batchs'] + config['train_discard']).to(device)  
         truth = train_truth.get_slice(Ls, config['tbpl']*config['batchs'] + config['train_discard']).to(device)
         predict = net(signal, train_z)
-        val_loss = loss_fn(predict.val, truth.val[...,predict.t.start:predict.t.stop,:], weight)
+        val_loss = loss_func(predict.val, truth.val[...,predict.t.start:predict.t.stop,:], weight)
         val_loss_list.append(val_loss.item())
 
         # write to tensorboard and print

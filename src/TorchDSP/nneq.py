@@ -472,8 +472,10 @@ class eqMLP(nn.Module):
     '''
     Complex [B, M, Nmodes] -> Complex [B, Nmodes]
     '''
-    def __init__(self, M:int, Nmodes=2, widths=[149, 132, 596]):
+    def __init__(self, M:int, Nmodes=2, widths=[149, 132, 596], res_net=True):
         super(eqMLP, self).__init__()
+        self.M = M
+        self.res_net = res_net
         self.Nmodes = Nmodes
         self.flatten = nn.Flatten()
         self.widths = widths
@@ -487,6 +489,7 @@ class eqMLP(nn.Module):
         self.act = nn.Tanh()
     
     def forward(self, x:torch.Tensor):
+        x0 = x[:, self.M //2,:]
         x = torch.cat([x.real, x.imag], dim=-1)  # Complex [B, M, Nmodes]  -> float [B, M, Nmodes*2]
         x = self.flatten(x)                       # float [B, M, Nmodes*2] -> float [B, M*Nmodes*2]
 
@@ -497,6 +500,7 @@ class eqMLP(nn.Module):
         # convert to complex
         x = x.view(-1, self.Nmodes, 2)                 # float [B, Nmodes*2] -> float [B, Nmodes, 2]
         x = x[..., 0] + (1j)*x[..., 1]            # float [B, Nmodes, 2] -> complex [B, Nmodes]
+        if self.res_net: x = x + x0
         return x
 
 
@@ -504,8 +508,10 @@ class eqCNNMLP(nn.Module):
     '''
     Complex [B, M, Nmodes] -> Complex [B, Nmodes]
     '''
-    def __init__(self, M:int,  Nmodes:int=2, kernel_size=10, channels=470, widths=[456, 467]):
+    def __init__(self, M:int,  Nmodes:int=2, kernel_size=10, channels=470, widths=[456, 467], res_net=True):
         super(eqCNNMLP, self).__init__()
+        self.M = M
+        self.res_net = res_net
         self.Nmodes = Nmodes
         self.conv1d = nn.Conv1d(in_channels=Nmodes*2, out_channels=channels, kernel_size=kernel_size)
         self.leaky_relu = nn.LeakyReLU(0.2)
@@ -519,6 +525,7 @@ class eqCNNMLP(nn.Module):
         self.tanh = nn.Tanh()
 
     def forward(self, x):
+        x0 = x[:, self.M //2,:]
         x = torch.cat([x.real, x.imag], dim=-1)   # Complex [B, M, Nmodes]  -> float [B, M, Nmodes*2]
         
         x = x.permute(0, 2, 1)                     # float [B, M, Nmodes*2]  -> float [B, Nmodes*2, M]
@@ -532,14 +539,18 @@ class eqCNNMLP(nn.Module):
         # convert to complex
         x = x.view(-1, self.Nmodes, 2)                 # float [B, Nmodes*2] -> float [B, Nmodes, 2]
         x = x[..., 0] + (1j)*x[..., 1]            # float [B, Nmodes, 2] -> complex [B, Nmodes]
+
+        if self.res_net: x = x + x0
         return x
 
 class eqBiLSTM(nn.Module):
     '''
     Complex [B, M, Nmodes] -> Complex [B, Nmodes]
     '''
-    def __init__(self, M:int,  Nmodes=2, hidden_size=226):
+    def __init__(self, M:int,  Nmodes=2, hidden_size=226, res_net=True):
         super(eqBiLSTM, self).__init__()
+        self.M = M
+        self.res_net = res_net
         self.Nmodes = Nmodes
         self.lstm = nn.LSTM(input_size=Nmodes*2, hidden_size=hidden_size, bidirectional=True, batch_first=True)
         self.flatten = nn.Flatten()
@@ -547,6 +558,7 @@ class eqBiLSTM(nn.Module):
         nn.init.normal_(self.dense.weight, mean=0.0, std=0)  # Adjust the mean and std as needed
 
     def forward(self, x):
+        x0 = x[:, self.M //2,:]                  # Complex [B, M, Nmodes]  -> complex [B, Nmodes]
         x = torch.cat([x.real, x.imag], dim=-1)  # Complex [B, M, Nmodes]  -> float [B, M, Nmodes*2]
 
         x, _ = self.lstm(x)                       # float [B, M, Nmodes*2]  -> float [B, M, hidden_size*2]
@@ -556,14 +568,17 @@ class eqBiLSTM(nn.Module):
         # convert to complex
         x = x.view(-1, self.Nmodes, 2)                 # float [B, Nmodes*2] -> float [B, Nmodes, 2]
         x = x[..., 0] + (1j)*x[..., 1]            # float [B, Nmodes, 2] -> complex [B, Nmodes]
+        if self.res_net: x = x + x0
         return x
 
 class eqCNNBiLSTM(nn.Module):
     '''
     Complex [B, M, Nmodes] -> Complex [B, Nmodes]
     '''
-    def __init__(self, M:int, Nmodes=2, channels=244, kernel_size=10, hidden_size=113):
+    def __init__(self, M:int, Nmodes=2, channels=244, kernel_size=10, hidden_size=113, res_net=True):
         super(eqCNNBiLSTM, self).__init__()
+        self.M = M
+        self.res_net = res_net
         self.Nmodes = Nmodes
         self.conv1d = nn.Conv1d(in_channels=2*Nmodes, out_channels=channels, kernel_size=kernel_size)
         self.leaky_relu = nn.LeakyReLU(0.2)
@@ -573,6 +588,7 @@ class eqCNNBiLSTM(nn.Module):
         nn.init.normal_(self.dense.weight, mean=0.0, std=0)  # Adjust the mean and std as needed
 
     def forward(self, x):
+        x0 = x[:, self.M //2,:]
         x = torch.cat([x.real, x.imag], dim=-1)  # Complex [B, M, Nmodes]  -> float [B, M, Nmodes*2]
 
         x = x.permute(0, 2, 1)              # float [B, M, Nmodes*2]  -> float [B, Nmodes*2, M]
@@ -586,6 +602,7 @@ class eqCNNBiLSTM(nn.Module):
         # convert to complex
         x = x.view(-1, self.Nmodes, 2)           # float [B, Nmodes*2] -> float [B, Nmodes, 2]
         x = x[..., 0] + (1j)*x[..., 1]      # float [B, Nmodes, 2] -> complex [B, Nmodes]
+        if self.res_net: x = x + x0
         return x
     
 
@@ -600,7 +617,7 @@ class eqID(nn.Module):
 
     def forward(self, x):
 
-        return 0
+        return x[:,self.M//2,:]
     
 
 
@@ -613,13 +630,13 @@ class NNeq(nn.Module):
         self.Nmodes = Nmodes
         self.method = method
         if method == 'MLP':
-            self.net = eqMLP(M, Nmodes)
+            self.net = eqMLP(M, Nmodes, res_net=res_net)
         elif method == 'BiLSTM':
-            self.net = eqBiLSTM(M, Nmodes)
+            self.net = eqBiLSTM(M, Nmodes, res_net=res_net)
         elif method == 'CNNBiLSTM':
-            self.net = eqCNNBiLSTM(M, Nmodes)
+            self.net = eqCNNBiLSTM(M, Nmodes, res_net=res_net)
         elif method == 'CNNMLP':
-            self.net = eqCNNMLP(M, Nmodes)
+            self.net = eqCNNMLP(M, Nmodes, res_net=res_net)
         elif method == 'ID':
             self.net = eqID(M, Nmodes)
         else:
@@ -627,11 +644,7 @@ class NNeq(nn.Module):
     
     def forward(self, x):
         # x: [batch, M, Nmodes]
-        x0 = x[:,(self.M//2),:]
-        if self.res_net:
-            return x0 + self.net(x)
-        else:
-            return self.net(x)
+        return self.net(x)
     
 
 models = {

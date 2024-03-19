@@ -222,17 +222,17 @@ class opticDataset(Dataset):
                 x = x.to(device)  # [batch_size, Nmodes]
                 y = y.to(device)  # [batch_size, M, Nmodes]
     '''
-    def __init__(self, Nch, Rs, M, path='data/train_data_afterCDCDSP.pkl', power_fix=True):
+    def __init__(self, Nch, Rs, M, path='data/train_data_afterCDCDSP.pkl', idx=(0,-1), power_fix=True):
         self.Nch = Nch
         self.Rs = Rs
         self.M = M
         train_y, train_x, train_t = pickle.load(open(path, 'rb'))
         k = get_k_batch(Nch, Rs, train_t)
         if power_fix:
-            self.y = train_y[k] * 10**(train_t[k][:,0]/20)[:,None,None]  # [15, 99985, Nmodes]
+            self.y = train_y[k, idx[0]:idx[1]] * 10**(train_t[k][:,0]/20)[:,None,None]  # [15, 99985, Nmodes]
         else:
-            self.y = train_y[k]
-        self.x = train_x[k]                                          # [15, 99985, Nmodes]
+            self.y = train_y[k, idx[0]:idx[1]]                                      # [15, 99985, Nmodes]
+        self.x = train_x[k, idx[0]:idx[1]]                                          # [15, 99985, Nmodes]
         self.task_info = train_t[k]
 
     def __len__(self):
