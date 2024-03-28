@@ -627,7 +627,7 @@ class SymHoPBC(nn.Module):
 
 class AmFoPBC(SymPBC):
     '''
-    Latest version of AmFoPBC. Nmodes=1,2.
+    Latest version of AmFoPBC. Nmodes=2.
     '''
 
     def __init__(self, rho=1.0, L=50, xpm_size=None, index_type='A'):
@@ -640,9 +640,12 @@ class AmFoPBC(SymPBC):
         self.C0 = nn.Parameter(torch.zeros((), dtype=torch.float32), requires_grad=True)
         self.xpm_conv1 = nn.Conv1d(1, 1, self.xpm_size, bias=False)   # real convolution
         self.xpm_conv2 = nn.Conv1d(1, 1, self.xpm_size, bias=False)   # real convolution
-        self.nn = ComplexLinear(len(self.index), 1, bias=False)      # no bias term
-        nn.init.zeros_(self.nn.real.weight)
-        nn.init.zeros_(self.nn.imag.weight)
+        self.nn1 = ComplexLinear(len(self.index), 1, bias=False)      # no bias term
+        self.nn2 = ComplexLinear(len(self.index), 1, bias=False)      # no bias term
+        nn.init.zeros_(self.nn1.real.weight)
+        nn.init.zeros_(self.nn1.imag.weight)
+        nn.init.zeros_(self.nn2.real.weight)
+        nn.init.zeros_(self.nn2.imag.weight)
         nn.init.zeros_(self.xpm_conv1.weight)
         nn.init.zeros_(self.xpm_conv2.weight)
 
@@ -677,7 +680,6 @@ class AmFoPBC(SymPBC):
         return x
               
 
-
     def get_index(self):
         '''
             Get symetric pertubation indexes.
@@ -700,10 +702,10 @@ class AmFoPBC(SymPBC):
     
     
     def IXIXPM(self, E, P):
-        x = E * torch.roll(E.conj(),1, dims=-1)                                   # x [B, L, Nmodes]
+        x = E * torch.roll(E.conj(),1, dims=-1)                                     # x [B, L, Nmodes]
         x = self.zcv_filter2(x.real) + (1j)*self.zcv_filter2(x.imag)                # x [B, L - xpm_size + 1, Nmodes]
-        x = E[...,(self.overlaps//2):-(self.overlaps//2),:].roll(1, dims=-1) * x  # x [B, L - xpm_size + 1, Nmodes] 
-        return x * torch.sqrt(P[...,None,None])**2 * (1j)
+        x = E[...,(self.overlaps//2):-(self.overlaps//2),:].roll(1, dims=-1) * x    # x [B, L - xpm_size + 1, Nmodes] 
+        return x * P[...,None,None] * (1j)
               
 
     
@@ -724,26 +726,19 @@ class AmFoPBC(SymPBC):
         Nmodes = signal.val.shape[-1]
 
         # IFWM term
-        features = self.nonlinear_features(signal.val)                       # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
-        features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:] # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
-        E = self.nn(features*torch.sqrt(P[...,None,None,None])**2)           # [batch, W-L, Nmodes, 1] or [W-L, Nmodes, 1]
-        E = E[...,0]                                                         # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        features = self.nonlinear_features(signal.val)                         # [batch, W, Nmodes, len(S)] or [W, Nmodes, len(S)]
+        features = features[..., (self.overlaps//2):-(self.overlaps//2),:,:]   # [batch, W-L, Nmodes, len(S)] or [W-L, Nmodes, len(S)]
+        E1 = self.nn1(features[...,0,:]* P[...,None,None])                     # [batch, W-L, 1] or [W-L, 1]
+        E2 = self.nn2(features[...,1,:]* P[...,None,None])                     # [batch, W-L, 1] or [W-L, 1]
+        E =  torch.cat([E1,E2], dim=-1)                                        # [batch, W-L, Nmodes] or [W-L, Nmodes]
         
         # SPM + IXPM
-        if Nmodes == 1:
-            power = torch.abs(signal.val)**2
-            phi = torch.sqrt(P[...,None,None])**2 * (self.C0 * power[:, (self.overlaps//2):-(self.overlaps//2),:]+ 2*self.zcv_filter1(power))     # [B, L - xpm_size + 1, 1]
-        elif Nmodes == 2:
-            power = torch.abs(signal.val)**2
-            x = 2*power + torch.roll(power, 1, dims=-1)               # x [B, L, Nmodes]
-            phi = torch.sqrt(P[...,None,None])**2 * (self.C0*power[:, (self.overlaps//2):-(self.overlaps//2),:].sum(dim=-1, keepdim=True) + 2*self.zcv_filter1(x))
-        else:
-            raise ValueError('signal.val.shape[-1] should be 1 or 2')
+        power = torch.abs(signal.val)**2
+        x = 2*power + torch.roll(power, 1, dims=-1)               # x [B, L, Nmodes]
+        phi = torch.sqrt(P[...,None,None])**2 * (self.C0*power[:, (self.overlaps//2):-(self.overlaps//2),:].sum(dim=-1, keepdim=True) + 2*self.zcv_filter1(x))
 
-        if signal.val.shape[-1] == 2:
-            E = E + self.IXIXPM(signal.val, P)
-
-        E = (E + signal.val[...,(self.overlaps//2):-(self.overlaps//2),:])*torch.exp(1j*phi)                   # [batch, W-L, Nmodes] or [W-L, Nmodes]
+        E = E + self.IXIXPM(signal.val, P)
+        E = E + signal.val[...,(self.overlaps//2):-(self.overlaps//2),:]*torch.exp(1j*phi)      # [batch, W-L, Nmodes] or [W-L, Nmodes]
 
         return TorchSignal(val=E, t=TorchTime(signal.t.start + (self.overlaps//2), signal.t.stop - (self.overlaps//2), signal.t.sps))
 
@@ -1177,6 +1172,7 @@ class MultiStepPBC(nn.Module):
             'SymFoPBC': SymFoPBC,
             'SymFoPBCNN': SymFoPBCNN,
             'ConvPBC': ConvPBC,
+            'AmFoPBC': AmFoPBC,
             'AmSymFoPBC': AmSymFoPBC,
             'RoSymFoPBC': RoSymFoPBC,
             'AdaptSymFoPBC': AdaptSymFoPBC,

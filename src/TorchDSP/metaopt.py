@@ -1,3 +1,6 @@
+'''
+    Meta optimizers.
+'''
 import torch, torch.nn as nn
 from .layers import ComplexLSTM, ComplexLinear, CReLU, MLP, ComplexGRU
 from .utils import flat_pytree, unflat_pytree, tree_map, pre_transform

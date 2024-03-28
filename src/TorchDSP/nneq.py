@@ -1,3 +1,6 @@
+'''
+    NN equalizer.
+'''
 import torch.nn as nn, torch, numpy as np, torch
 from typing import Union, List, Tuple, Optional
 from .core import TorchSignal, TorchTime
@@ -575,14 +578,14 @@ class eqCNNBiLSTM(nn.Module):
     '''
     Complex [B, M, Nmodes] -> Complex [B, Nmodes]
     '''
-    def __init__(self, M:int, Nmodes=2, channels=244, kernel_size=10, hidden_size=113, res_net=True):
+    def __init__(self, M:int=41, Nmodes=2, channels=244, kernel_size=10, hidden_size=113, num_layers=1, res_net=True):
         super(eqCNNBiLSTM, self).__init__()
         self.M = M
         self.res_net = res_net
         self.Nmodes = Nmodes
         self.conv1d = nn.Conv1d(in_channels=2*Nmodes, out_channels=channels, kernel_size=kernel_size)
         self.leaky_relu = nn.LeakyReLU(0.2)
-        self.lstm = nn.LSTM(input_size=channels, hidden_size=hidden_size, bidirectional=True, batch_first=True)
+        self.lstm = nn.LSTM(input_size=channels, hidden_size=hidden_size, num_layers=num_layers, bidirectional=True, batch_first=True)
         self.flatten = nn.Flatten()
         self.dense = nn.Linear(2*hidden_size*(M-kernel_size+1), Nmodes*2, bias=False)
         nn.init.normal_(self.dense.weight, mean=0.0, std=0)  # Adjust the mean and std as needed
@@ -618,7 +621,166 @@ class eqID(nn.Module):
     def forward(self, x):
 
         return x[:,self.M//2,:]
+
+
+class eqAMPBC(nn.Module):
+    '''
+    Latest version of AmFoPBC. Nmodes=2.
+    '''
+
+    def __init__(self, M:int=41, rho=1, index_type='A'):
+        super(eqAMPBC, self).__init__()
+        self.M = M 
+        self.L = M - 1
+        self.index_type = index_type
+        self.rho = rho
+        self.index = self.get_index()
+        self.xpm_size = self.M
+        self.overlaps = self.xpm_size - 1
+
+        self.C0 = nn.Parameter(torch.zeros((), dtype=torch.float32), requires_grad=True)
+        self.xpm_conv1 = nn.Conv1d(1, 1, self.xpm_size, bias=False)   # real convolution
+        self.xpm_conv2 = nn.Conv1d(1, 1, self.xpm_size, bias=False)   # real convolution
+        self.nn1 = ComplexLinear(len(self.index), 1, bias=False)      # no bias term
+        self.nn2 = ComplexLinear(len(self.index), 1, bias=False)      # no bias term
+        nn.init.zeros_(self.nn1.real.weight)
+        nn.init.zeros_(self.nn1.imag.weight)
+        nn.init.zeros_(self.nn2.real.weight)
+        nn.init.zeros_(self.nn2.imag.weight)
+        nn.init.zeros_(self.xpm_conv1.weight)
+        nn.init.zeros_(self.xpm_conv2.weight)
+
+    def zcv_filter1(self, x):
+        '''
+        zeros center vmap filter.
+        x: real [B, L, Nmodes] -> real [B, L -  xpm_size + 1, Nmodes]
+        '''
+        B = x.shape[0]
+        Nmodes = x.shape[-1]
+        x = x.transpose(1,2)                            # x [B, Nmodes, L]
+        x = x.reshape(-1, 1, x.shape[-1])               # x [B*Nmodes, 1, L]
+        c0 = self.xpm_conv1.weight[0,0, self.xpm_size//2]
+        x = self.xpm_conv1(x) - c0 * x[:,:,(self.overlaps//2):-(self.overlaps//2)]     # x [B*Nmodes, 1, L - xpm_size + 1]
+        x = x.reshape(B, Nmodes, x.shape[-1])          # x [B, Nmodes, L - xpm_size + 1]
+        x = x.transpose(1,2)                            # x [B, L - xpm_size + 1, Nmodes] 
+        return x
     
+    def zcv_filter2(self, x):
+        '''
+        zeros center vmap filter.
+        x: real [B, L, Nmodes] -> real [B, L -  xpm_size + 1, Nmodes]
+        '''
+        B = x.shape[0]
+        Nmodes = x.shape[-1]
+        x = x.transpose(1,2)                            # x [B, Nmodes, L]
+        x = x.reshape(-1, 1, x.shape[-1])               # x [B*Nmodes, 1, L]
+        c0 = self.xpm_conv2.weight[0,0, self.xpm_size//2]
+        x = self.xpm_conv2(x) - c0 * x[:,:,(self.overlaps//2):-(self.overlaps//2)]     # x [B*Nmodes, 1, L - xpm_size + 1]
+        x = x.reshape(B, Nmodes, x.shape[-1])          # x [B, Nmodes, L - xpm_size + 1]
+        x = x.transpose(1,2)                            # x [B, L - xpm_size + 1, Nmodes] 
+        return x
+              
+
+    def get_index(self):
+        '''
+            Get symetric pertubation indexes.
+            S = {(m,n)| |mn|<= rho*L/2, |m|<=L/2, |n|<= L/2, n>=|m|, mn \neq 0}
+        '''
+        S = []
+        if self.index_type == 'A':
+            for m in range(-self.L//2, self.L//2 + 1):
+                for n in range(-self.L//2, self.L//2 + 1):
+                    if (abs(m*n) <= self.rho * self.L //2) and (n >= abs(m)) and (m*n != 0) and (abs(m) + abs(n) <=  self.L //2):
+                        S.append((m,n))
+        elif self.index_type == 'B':
+            for m in range(-self.L//2, self.L//2 + 1):
+                for n in range(-self.L//2, self.L//2 + 1):
+                    if (abs(m) + abs(n) <=  self.L //2) and (n >= abs(m)) and (m*n != 0):
+                        S.append((m,n))
+        else:
+            raise ValueError
+        return S
+    
+    def nonlinear_features(self, E):
+        '''
+        1 order PBC nonlinear features.
+            E: [batch, W, Nmodes] or [W, Nmodes] -> [batch, W, Nmodes, len(S)] or [W, Nmodes,len(S)]
+        '''
+        Es = []
+        p = self.M // 2
+        for i,(m,n) in enumerate(self.index):
+            if n > abs(m):
+                A = E[:,p+n,:] * E[:,p+m+n,:].conj()   # [batch, Nmodes]
+                Emn = (A + A.roll(1, dims=-1)) * E[:,p+m,:]
+                A = E[:,p+m,:] * E[:,p+m+n,:].conj() 
+                Enm = (A + A.roll(1, dims=-1)) * E[:,p+n,:]
+                A = E[:,p-n,:] * E[:,p-m-n,:].conj() 
+                Emn_ = (A + A.roll(1, dims=-1)) * E[:,p-m,:]
+                A = E[:,p-m,:] * E[:,p-m-n,:].conj() 
+                Enm_ = (A + A.roll(1, dims=-1)) * E[:,p-n,:]
+                Es.append(Emn+Enm+Emn_+Enm_)
+            elif (m==0 and n==0):
+                A = E[:,p,:]*E[:,p,:].conj()
+                Emn = (A + A.roll(1, dims=-1)) * E[:,p,:]
+                Es.append(Emn)
+            else:
+                A = E[:,p+n,:] * E[:,p+m+n,:].conj() 
+                Emn = (A + A.roll(1, dims=-1)) * E[:,p+m,:]
+                A = E[:,p-n,:] * E[:,p-m-n,:].conj() 
+                Emn_ = (A + A.roll(1, dims=-1)) * E[:,p-m,:]
+                Es.append(Emn+Emn_)
+
+        F = torch.stack(Es, dim=-1)  # [batch, Nmodes, len(S)]
+        return F 
+    
+    def IXIXPM(self, E):
+        x = E * torch.roll(E.conj(),1, dims=-1)                                     # x [B, L, Nmodes]
+        x = self.zcv_filter2(x.real) + (1j)*self.zcv_filter2(x.imag)                # x [B, L - xpm_size + 1, Nmodes]
+        x = E[...,(self.overlaps//2):-(self.overlaps//2),:].roll(1, dims=-1) * x    # x [B, L - xpm_size + 1, Nmodes] 
+        return x[:,0,:] * (1j)  #   [B, Nmodes]
+              
+
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        '''
+        Input:
+            signal:  [batch, M, Nmodes] or [M, Nmodes]
+            task_info: torch.Tensor or None. [B, 4] ot None.    [P,Fi,Fs,Nch]
+        Output:
+            TorchSignal.
+            Nmodes = 1:
+                O_{b,k,i} = gamma P0^{3/2} * sum_{m,n} E_{b, k+n, i} E_{b, k+m+n, i}^* E_{b, k+m, i} C_{m,n}
+            Nmodes = 2:
+                O_{b,k,i} = gamma P0^{3/2} * sum_{m,n} (E_{b, k+n, i} E_{b, k+m+n, i}^* +  E_{b, k+n, -i} E_{b, k+m+n, -i}^*) E_{b, k+m, i} C_{m,n}
+        '''
+
+        # IFWM term
+        features = self.nonlinear_features(x)                # [batch, Nmodes, len(S)] or [Nmodes, len(S)]
+        E1 = self.nn1(features[...,0,:])                     # [batch, 1] 
+        E2 = self.nn2(features[...,1,:])                     # [batch, 1] 
+        E =  torch.cat([E1,E2], dim=-1)                      # [batch, Nmodes]
+        
+        # # SPM + IXPM
+        power = torch.abs(x)**2
+        ps = 2*power + torch.roll(power, 1, dims=-1)               # x [B, L, Nmodes]
+        phi = self.C0*power[:, self.M//2,:].sum(dim=-1, keepdim=True) + 2*self.zcv_filter1(ps)[:,0,:] # [B, Nmodes]
+
+        E = E + self.IXIXPM(x)                     # [batch, Nmodes]
+        E = E + x[:,self.M//2,:]*torch.exp(1j*phi)          # [batch, Nmodes] 
+
+        return E
+
+
+class eqAMPBCaddNN(nn.Module):
+    def __init__(self, pbc_info, nn_info):
+        super(eqAMPBCaddNN, self).__init__()
+        self.pbc = eqAMPBC(**pbc_info)
+        self.nn = eqCNNBiLSTM(**nn_info)
+    
+    def forward(self, x):
+        return self.pbc(x) + self.nn(x) - x[:,x.shape[1]//2,:]
+
+
 
 
 class NNeq(nn.Module):
@@ -652,7 +814,14 @@ models = {
             'HPBC':HPBC,
             'PBCNN':PBCNN,
             'SOPBC':SOPBC,
-            'NNeq':NNeq
+            'NNeq':NNeq,
+            'eqMLP':eqMLP,
+            'eqBiLSTM':eqBiLSTM,
+            'eqCNNBiLSTM':eqCNNBiLSTM,
+            'eqCNNMLP':eqCNNMLP,
+            'eqID':eqID,
+            'eqAMPBC':eqAMPBC,
+            'eqAMPBCaddNN':eqAMPBCaddNN,
         }  
 
     

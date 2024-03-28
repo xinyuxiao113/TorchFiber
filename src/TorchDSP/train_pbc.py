@@ -7,6 +7,7 @@ from torch.utils.tensorboard.writer import SummaryWriter
 from torch import optim
 from torch.optim.lr_scheduler import StepLR
 from functools import partial
+import scipy.constants as const, scipy.special as special
 from .dataloader import signal_dataset, get_k_batch, get_signals
 from src.TorchSimulation.receiver import  BER
 from .core import TorchSignal, TorchTime, dict_type
@@ -28,6 +29,18 @@ optimizers = {
     "SparseAdam": optim.SparseAdam
 }
 
+def Qsq(ber):
+    return 20 * np.log10(np.sqrt(2) * np.maximum(special.erfcinv(2 * ber), 0.))
+
+
+
+def well(x, mu=4):
+    return torch.sigmoid(mu*(x - 0.3162)) + torch.sigmoid(mu*(-x - 0.3162))
+
+def BER_well(predict, truth, weight=None, mu=1):
+    error = predict - truth
+    dis = torch.max(torch.abs(error.real), torch.abs(error.imag))
+    return torch.mean(well(dis, mu))
 
 # 4-order loss: we hope the model concentrate on the large error signal.  (reduce the gap of loss function and BER)
 # when the error is small, we should not learn the error, because the error is purely guasisan noise.
@@ -91,8 +104,10 @@ def train_model(config: dict):
     # data loading
     device = config['device']
     Pch = config['Pch'] if 'Pch' in config.keys() else None
-    train_signal, train_truth, train_z = get_signals(config['train_path'], config['Nch'], config['Rs'], Pch=Pch,  device='cpu')
-    test_signal, test_truth, test_z = get_signals(config['test_path'], config['Nch'], config['Rs'], device='cpu')
+    idx_train = config['idx_train'] if 'idx_train' in config.keys() else (0, None)
+    idx_test = config['idx_test'] if 'idx_test' in config.keys() else (0, None)
+    train_signal, train_truth, train_z = get_signals(config['train_path'], config['Nch'], config['Rs'], Pch=Pch,  device='cpu', idx=idx_train)
+    test_signal, test_truth, test_z = get_signals(config['test_path'], config['Nch'], config['Rs'], device='cpu', idx=idx_test)
 
     # define model and load model
     model = models[config['model_name']]
@@ -128,8 +143,18 @@ def train_model(config: dict):
     elif config['loss_type'] == 'WMSE': loss_fn = weightedMSE
     elif config['loss_type'] == 'loss3': loss_fn = loss3
     elif config['loss_type'] == 'loss4': loss_fn = loss4
+    elif config['loss_type'] == 'BER_well': loss_fn = BER_well
     else: raise ValueError('loss_type should be MT or Mean')
     
+    if 'adapt_mu' in config.keys() and config['adapt_mu'] == True and config['loss_type'] == 'BER_well':
+        mus = 4*1.1**np.repeat(np.arange(0, config['epochs']//2 + 1), 2)
+    elif 'adapt_mu' in config.keys() and config['adapt_mu'] == True and config['loss_type'] == 'MSE':
+        mus = 10**(np.linspace(-3, np.log10(0.31622776), config['epochs'] + 1))
+    elif 'adapt_mu' in config.keys() and config['adapt_mu'] == False and config['loss_type'] == 'BER_well':
+        raise ValueError('adapt_mu should be True when loss_type is BER_well')
+    else:
+        mus = np.zeros(config['epochs'] + 1)
+
     epoch0 = config['train epoch'] + 1 if 'train epoch' in config.keys() else 1
 
     for epoch in range(epoch0, epoch1 + 1):
@@ -180,11 +205,9 @@ def train_model(config: dict):
         del signal, truth, predict
         torch.cuda.empty_cache()
         
+        show_interval = config['show_interval'] if 'show_interval' in config.keys() else config['save_interval']
 
-        if (epoch) % config['save_interval'] == 0:
-            # save model
-            
-            checkpoint = {
+        checkpoint = {
                 'model': net.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 'train_loss': train_loss_list,
@@ -192,24 +215,24 @@ def train_model(config: dict):
                 'train epoch': epoch,
                 **config, 
             }
-
+        
+        if (epoch) % show_interval == 0:
             # test model
             y_, x_ = test_model(checkpoint, test_signal, test_truth, test_z)
             metric = calculate_BER(y_, x_, config['ber_discard'])
             checkpoint['metric'] = metric
             y_,x_ = 0,0 
             torch.cuda.empty_cache()
-
-            torch.save(checkpoint, config['model_path'] + f'.ckpt{epoch}')
-
-            writer.add_scalar('Metric/Q_max', np.max(np.mean(metric['Qsq'], axis=-1)), epoch)
             writer.add_scalar('Metric/BER_min', np.min(np.mean(metric['BER'],axis=-1)), epoch)
-
-            writer.add_scalar('Metric/Q_mean', np.mean(np.mean(metric['Qsq'], axis=-1)), epoch)
-            writer.add_scalar('Metric/BER_mean', np.mean(np.mean(metric['BER'], axis=-1)), epoch)
-
+            writer.add_scalar('Metric/Q_max', Qsq(np.min(np.mean(metric['BER'],axis=-1))), epoch)
+            writer.add_scalar('Metric/BER_mean', np.mean(metric['BER']), epoch)
+            writer.add_scalar('Metric/Q_mean', Qsq(np.mean(metric['BER'])), epoch)
             print(f"Epoch [{epoch}/{config['epochs']}] BER: ", metric['BER'], flush=True)
             print(f"Epoch [{epoch}/{config['epochs']}] Qsq: ", metric['Qsq'], flush=True)
+
+        if epoch % config['save_interval'] == 0:
+            torch.save(checkpoint, config['model_path'] + f'ckpt{epoch}')
+            print(f"Epoch [{epoch}/{config['epochs']}] Model saved!", flush=True)
         print('\n' + '#' * 20 + '\n', flush=True)
     writer.close()
 
@@ -244,7 +267,7 @@ def test_model(ckpt: dict, test_signal: TorchSignal, test_truth: TorchSignal, te
     x_ = []
     print(f'Testing: ', flush=True)
     t0 = time.time()
-    batchs = (test_signal.val.shape[-2] // ckpt['tbpl']) + 1
+    batchs = -(-test_signal.val.shape[-2] // ckpt['tbpl'])
     for i in range(batchs):
         length = min(Ls, test_signal.val.shape[-2] - i*ckpt['tbpl'])
         signal = test_signal.get_slice(length, i*ckpt['tbpl'])

@@ -1,3 +1,14 @@
+'''
+    Baseline algorithms for digital signal processing.
+        CDC: Chromatic dispersion compensation.
+        DBP: Digital back propagation.
+        DDLMS: Decision-directed least mean square.
+        CDCDSP: CDC + DDLMS.
+        DBPDSP: DBP + DDLMS.
+        CDCtransform: CDC transform a signal_dataset.
+        CDCDSP: CDC + DDLMS transform a signal_dataset.
+        DBPDSP: DBP + DDLMS transform a signal_dataset.
+'''
 import torch, numpy as np
 from torch.fft import fft,fftfreq,fftshift,ifft
 

@@ -55,7 +55,7 @@ def get_k_batch(Nch, Rs, train_t) -> torch.Tensor:
         return k
     
 
-def get_signals(path: str, Nch: int, Rs: int, Pch=None,  device='cpu', batch_max=10000):
+def get_signals(path: str, Nch: int, Rs: int, Pch=None,  device='cpu', batch_max=10000, idx=(0, None)):
     '''
         Get single mode signals with special Nch and Rs and Pch. 
 
@@ -69,8 +69,8 @@ def get_signals(path: str, Nch: int, Rs: int, Pch=None,  device='cpu', batch_max
     else:
         k = get_k_batch(Nch, Rs, test_t)
     k = k[:batch_max]
-    test_signal = TorchSignal(test_y[k], TorchTime(0,0,1)).to(device)
-    test_truth = TorchSignal(test_x[k], TorchTime(0,0,1)).to(device)
+    test_signal = TorchSignal(test_y[k, idx[0]:idx[1]], TorchTime(0,0,1)).to(device)
+    test_truth = TorchSignal(test_x[k, idx[0]:idx[1]], TorchTime(0,0,1)).to(device)
     test_z = test_t[k].to(device) 
     return test_signal, test_truth, test_z
 
@@ -222,12 +222,19 @@ class opticDataset(Dataset):
                 x = x.to(device)  # [batch_size, Nmodes]
                 y = y.to(device)  # [batch_size, M, Nmodes]
     '''
-    def __init__(self, Nch, Rs, M, path='data/train_data_afterCDCDSP.pkl', idx=(0,-1), power_fix=True):
+    def __init__(self, Nch, Rs,  M, Pch=None, path='data/train_data_afterCDCDSP.pkl', idx=(0,-1), power_fix=True):
         self.Nch = Nch
         self.Rs = Rs
         self.M = M
         train_y, train_x, train_t = pickle.load(open(path, 'rb'))
-        k = get_k_batch(Nch, Rs, train_t)
+
+        if Pch is not None:
+            k = []
+            for p in Pch:
+                k = k + get_k(Nch, Rs, p, train_t)
+        else:
+            k = get_k_batch(Nch, Rs, train_t)
+            
         if power_fix:
             self.y = train_y[k, idx[0]:idx[1]] * 10**(train_t[k][:,0]/20)[:,None,None]  # [15, 99985, Nmodes]
         else:

@@ -1,3 +1,12 @@
+'''
+    DSP module.
+    DSP = DBP + ADF.
+    DBP: Digital Back Propagation.
+    ADF: Adaptive Decision Feedback.
+    ADFCell: ADF cell.
+    ADF: ADF module.
+    LDBP: Learnable DBP module.
+'''
 import torch, copy, numpy as np, matplotlib.pyplot as plt
 import torch.nn.functional as F, torch.nn.init as init, torch.nn as nn
 from typing import Union

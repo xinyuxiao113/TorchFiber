@@ -1,3 +1,6 @@
+'''
+    This file contains the implementation of complex-valued layers.
+'''
 import torch, torch.nn as nn, numpy as np, matplotlib.pyplot as plt
 import torch.nn.functional as F
 import torch.nn.init as init

@@ -89,11 +89,13 @@ def fit(P, X1, Y, weight=None, lamb_l2:float=0, pol_sep=True):
     fit the coeff for PBC, if pol_sep==True, then the PBC is applied to each polarization separately
     Input:
         P: [B]
-        X: [B, N, Nmodes, p]  
+        X: [B, N, Nmodes, p]    Rx
         Y: [B, N, Nmodes]
         weight: [B, N, Nmodes]
     output:
         C: [Nmodes, p]
+
+         C = argmin_{C}  \sum weight*|X1 @ C - Y|^2
     '''
     X1= X1 * P[:,None,None,None]  
 
@@ -104,7 +106,7 @@ def fit(P, X1, Y, weight=None, lamb_l2:float=0, pol_sep=True):
 
     if pol_sep:
         A = torch.einsum('bnm, bnmp, bnmq -> mpq', weight.to(torch.complex64), X1.conj(), X1) / X1.shape[1]  # [m, p, p]
-        b = torch.einsum('bnm, bnmp, bnm  -> mp', weight.to(torch.complex64), X1.conj(), Y) / X1.shape[1]   # [m, p]
+        b = torch.einsum('bnm, bnmp, bnm  -> mp', weight.to(torch.complex64), X1.conj(), Y) / X1.shape[1]    # [m, p]
         C = [torch.linalg.solve(A[i] + lamb_l2 * torch.eye(A.shape[-1]), b[i]) for i in range(A.shape[0])]
         return torch.stack(C, dim=0)
     else:
@@ -115,7 +117,7 @@ def fit(P, X1, Y, weight=None, lamb_l2:float=0, pol_sep=True):
 
 
 
-def test(data, C, xis, BER_discard=20000):
+def test(data, C, BER_discard=20000):
     '''
         xis: [L]
         P, X0, X1, Y, Symb = *data 
@@ -129,23 +131,9 @@ def test(data, C, xis, BER_discard=20000):
     Ls, Qs = [], []
     P, X0, X1, Y, Symb = data
     pbc = predict(P, X1, C) # [B, N, Nmodes]
-    for xi in xis:
-        Yhat = X0 + xi * pbc   # [B, N, Nmodes] 
-        metric = BER(Yhat[:,BER_discard:,:], Symb[:,BER_discard:,:])
-        Ls.append(torch.mean(torch.abs(Yhat -  Symb)**2, dim=1))  # [B, Nmodes]
-        Qs.append(metric['Qsq'])                                  # [B, Nmodes]
-    return np.array(Ls), np.array(Qs)   # [L, B, Nmodes], [L, B, Nmodes]
-
-
-def test_PBC(C, test_data, xis=np.linspace(0.6, 1.5, 100)):
-    '''
-        s,e,k = 2000, -2000, 1            # s,e:symol start and end, k:feature start 0 or 1
-        lamb_l2 = 0
-    '''
-    Ls, Qs = test(test_data, C, xis=xis)
-    L1, Q1 = test(test_data, C, xis=np.ones(1))
-    return Q1, L1, Qs, Ls, xis  # [1, B, Nmodes], [1, B, Nmodes], [L, B, Nmodes], [L, B, Nmodes], [L]
-
+    Yhat = X0 +  pbc   # [B, N, Nmodes] 
+    metric = BER(Yhat[:,BER_discard:,:], Symb[:,BER_discard:,:])
+    return metric
 
 
 if __name__ == '__main__':
@@ -186,7 +174,7 @@ if __name__ == '__main__':
     use_Rx_only = True
     P, X0, X1, Y_real, Symb = train_data
     Y = nearst_symb(X0) - X0 if use_Rx_only else Y_real
-    C0 =  fit(P, X1[:,s:e,:,:], Y[:,s:e,:], lamb_l2=lamb_l2, pol_sep=True)
+    C0 =  fit(P, X1[:,s:e,:,:], Y[:,s:e,:], lamb_l2=lamb_l2, pol_sep=True)   # PBC 系数
 
     ps = np.linspace(1, 3, 11)
     gammas = np.linspace(0.1, 4, 40)
@@ -197,9 +185,14 @@ if __name__ == '__main__':
     for p in ps:
         for gamma in gammas:
             t0 = time.time()
-            weight = Kernel(P, X1[:,s:e,:,:], Y[:,s:e,:], C0, p=p, gamma=torch.std(Y).item()*gamma, k_type='p-gamma') 
-            C = fit(P, X1[:,s:e,:,:], Y[:,s:e,:], weight, lamb_l2=lamb_l2, pol_sep=False)  # [Nmodes, p]
-            L1, Q1 = test(test_data,C, xis=np.linspace(1,1,1), BER_discard=200)
+            weight = Kernel(P, X1[:,s:e,:,:], Y[:,s:e,:], C0, p=p, gamma=torch.std(Y).item()*gamma, k_type='p-gamma')   # RKN kenel
+
+
+            C = fit(P, X1[:,s:e,:,:], Y[:,s:e,:], weight, lamb_l2=lamb_l2, pol_sep=False)  # [Nmodes, p]   X1: 非线性特征    Y: 误差
+            #  C = argmin_{C}  \sum weight*|X1 @ C - Y|^2
+
+
+            L1, Q1 = test(test_data, C, BER_discard=200)
             t1 = time.time()
             print(f'p={p}, gamma={gamma}, time: {t1-t0}, Q1={Q1}, MSE={L1}')
             Q_list[f'p={p}, gamma={gamma}'] = Q1

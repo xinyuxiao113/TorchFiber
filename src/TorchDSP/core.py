@@ -1,3 +1,9 @@
+'''
+Core classes for TorchDSP.
+1. TorchTime: signal time information.
+2. TorchSignal: signal information.
+3. TorchInput: data structure for training neural network.
+'''
 import torch, numpy as np
 import argparse
 import json
