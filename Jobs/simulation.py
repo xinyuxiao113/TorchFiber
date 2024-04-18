@@ -36,6 +36,8 @@ NF = args['NF']                 # EDFA Noise Figure. [dB]
 beta2 = get_beta2(D, Fc)        # [s^2/km]
 spacing_factor = args['SF'] # freqspace/Rs
 
+
+os.makedirs(args['path'], exist_ok=True)
                 
 for Nch in args['Nch']:
     for Rs in args['Rs']:
@@ -53,7 +55,6 @@ for Nch in args['Nch']:
             tx_path = args['path'] + f'/Tx_Nch{Nch}_{int(Rs/1e9)}GHz_Pch{Pch_dBm}dBm'
             channel_path = args['path'] + f'/Channel_Nch{Nch}_{int(Rs/1e9)}GHz_Pch{Pch_dBm}dBm'
 
-            if os.path.exists(channel_path): continue
             symb_only = False
             tx_data = simpleWDMTx(symb_only, k_tx, args['batch'], M, args['Nbits'], sps, Nch, args['Nmodes'], Rs, freqspace, Pch_dBm)
             with open(tx_path, 'wb') as file: pickle.dump(tx_data['config'], file)

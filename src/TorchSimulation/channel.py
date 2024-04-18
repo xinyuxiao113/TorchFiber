@@ -130,7 +130,7 @@ def edfa(Ei, Fs=100e9, G=20, NF=4.5, Fc=193.1e12, device='cpu'):
 
 
 @calc_time
-def manakov_ssf(tx_data, seed, Ltotal, Lspan, hz, alpha, D, gamma, Fc, amp='edfa', NF=4.5, order=2, openPMD=False, Dpmd=3, Lcorr=0.1, device='cpu'):      
+def manakov_ssf(tx_data, seed, Ltotal, Lspan, hz, alpha, D, gamma, Fc, amp='edfa', NF=4.5, order=2, openPMD=False, Dpmd=3, Lcorr=0.1, device='cuda:0'):      
     """
     Manakov model split-step Fourier (symmetric, dual-pol.)
     Input:

@@ -164,7 +164,7 @@ def _BER(y: torch.Tensor, truth: torch.Tensor, M=16, eval_range=(0,None)):
     
     import scipy.special as special
     def Qsq(ber):
-        return 20 * np.log10(np.sqrt(2) * np.maximum(special.erfcinv(2 * ber), 0.))
+        return 20 * np.log10(np.sqrt(2) * np.maximum(special.erfcinv(np.minimum(2 * ber, 0.999)), 0.))
     
     y = y[..., eval_range[0]:eval_range[1], :]
     truth = truth[..., eval_range[0]:eval_range[1], :]
@@ -180,7 +180,7 @@ def _BER(y: torch.Tensor, truth: torch.Tensor, M=16, eval_range=(0,None)):
 
     ber = torch.mean((br!=bt)*1.0, dim=-2)
 
-    return {'BER':ber.cpu().numpy(), 'SER':ser, 'Qsq':Qsq(ber.cpu().numpy()), 'SNR': SNR_fn(y, truth).cpu().numpy()}
+    return {'BER':ber.cpu().numpy(), 'SER':ser, 'Qsq':Qsq(ber.cpu().numpy()), 'SNR': SNR_fn(y, truth).cpu().detach().numpy()}
 
 
 def BER(y: torch.Tensor, truth: torch.Tensor, M=16, eval_range=(0,None), batch=-1):
@@ -293,4 +293,4 @@ def simpleRx(seed, trans_data, tx_config, chid, rx_sps, FO=0, lw=0, phi_lo=0,Plo
     sigRx = sigRx2/L2(sigRx2)
     
     config = {'seed':seed,'chid':chid,'rx_sps':rx_sps,'FO': FO,'lw':lw,'phi_lo':phi_lo,'Plo_dBm':Plo_dBm,'method':method}
-    return {'signal':sigRx, 'phase noise':ϕ_pn_lo, 'config':config}
+    return {'signal':sigRx.to('cpu'), 'phase noise':ϕ_pn_lo, 'config':config}

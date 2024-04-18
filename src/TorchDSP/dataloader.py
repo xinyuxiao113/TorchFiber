@@ -1,6 +1,8 @@
-import pickle, torch, numpy as np, time, random, os
+import pickle, torch, numpy as np, time, random, os, h5py
 from .core import TorchInput, TorchSignal, TorchTime
 from torch.utils.data import Dataset
+
+
 
 def metric_for(method='CDC',info='Qsq', Nmodes=2, Nch=1, Rs=20, P=0, discard=10000):
     '''
@@ -226,6 +228,7 @@ class opticDataset(Dataset):
         self.Nch = Nch
         self.Rs = Rs
         self.M = M
+
         train_y, train_x, train_t = pickle.load(open(path, 'rb'))
 
         if Pch is not None:
@@ -249,4 +252,62 @@ class opticDataset(Dataset):
         i = idx // (self.y.shape[1] - self.M + 1)
         j = idx % (self.y.shape[1] - self.M + 1)
         return self.y[i, j:j+self.M, :], self.x[i, j + (self.M//2), :], self.task_info[i]  # [M, Nmodes], [Nmodes]
+
+
+
+
+class MyDataset(Dataset):
+
+    def __init__(self, path='dataset/test.h5', Nch=[3], Rs=[40], Pch=[-1], Nmodes=2, window_size=41, strides=1, Nsymb=10000000, transform='Rx_CDCDSP', truncate=20000, Tx_window=False):
+        # dtype: 'signal' or 'tensor'
+        self.path = path
+        self.Nch = Nch if type(Nch) == list else [Nch]
+        self.Rs = Rs if type(Rs) == list else [Rs]
+        self.Pch = Pch if type(Pch) == list else [Pch]
+        self.Nmodes = Nmodes
+        self.window_size = window_size
+        self.transform = transform
+        self.strides = strides
+        self.truncate = truncate
+        self.Tx_window = Tx_window
+
+        self.Tx = []
+        self.Rx = []
+        # self.Rx_CDCDSP = []
+        # self.Rx_CDCDSP_PBC = []
+        self.info = []
+
+        with h5py.File(path, 'r') as f:
+            for key in f.keys():
+                group = f[key]
+                if group.attrs['Nch'] in self.Nch and group.attrs['Rs'] in self.Rs and group.attrs['Nmodes'] == Nmodes and group.attrs['Pch'] in self.Pch:
+                    s = group[transform].attrs['start']
+                    e = group[transform].attrs['stop']  + group[transform].shape[1]
+                    sps = group[transform].attrs['sps']
+                    self.Tx.append(torch.from_numpy(group['Tx'][:,truncate + s:e]))
+                    self.Rx.append(torch.from_numpy(group[transform][:, truncate:]))
+                    self.info.append(torch.from_numpy(group['info'][...]))
+        
+        if self.Tx == []:
+            raise ValueError("No such dataset")
+
+        self.Tx = torch.cat(self.Tx, dim=0)
+        self.Rx = torch.cat(self.Rx, dim=0)
+        self.Rx_sps = sps
+        self.info = torch.cat(self.info, dim=0)
+        self.length = min(self.Tx.shape[0] * ((self.Tx.shape[1] - self.window_size)//self.strides + 1), Nsymb)
+
     
+    def __len__(self):
+        return self.length
+
+
+    def __getitem__(self, idx):
+    
+        i = idx // ((self.Tx.shape[1] - self.window_size)//self.strides + 1)
+        j = idx % ((self.Tx.shape[1] - self.window_size)//self.strides + 1)
+
+        if self.Tx_window:
+            return self.Rx[i, j*self.strides*self.Rx_sps: (j*self.strides+self.window_size)*self.Rx_sps, :], self.Tx[i, j*self.strides:j*self.strides+self.window_size, :], self.info[i]  # [M, Nmodes], [Nmodes]
+        else:
+            return self.Rx[i, j*self.strides*self.Rx_sps: (j*self.strides+self.window_size)*self.Rx_sps, :], self.Tx[i, j*self.strides+(self.window_size//2), :], self.info[i]

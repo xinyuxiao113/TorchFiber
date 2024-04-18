@@ -218,7 +218,7 @@ def train_model(config: dict):
         
         if (epoch) % show_interval == 0:
             # test model
-            y_, x_ = test_model(checkpoint, test_signal, test_truth, test_z)
+            y_, x_ = test_model(checkpoint, test_signal, test_truth, test_z, device=device)
             metric = calculate_BER(y_, x_, config['ber_discard'])
             checkpoint['metric'] = metric
             y_,x_ = 0,0 

@@ -214,6 +214,7 @@ def _CDCDSP(E: torch.Tensor, truth: torch.Tensor, length: float, Fs: torch.Tenso
     Output:
         compensated signal.
     '''
+    device = torch.cuda
     E = CDC(E, Fs, length)  # [batch, Nfft, Nmodes]
     F = DDLMS(E, truth, sps, lead_symbols)
     return F

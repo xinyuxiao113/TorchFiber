@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 import torch, numpy as np
 import scipy.constants as const, scipy.special as special
 from src.TorchSimulation.receiver import  BER
-from .dataloader import  get_signals, opticDataset
+from .dataloader import  get_signals, opticDataset, MyDataset
 from .nneq import models
 from .opt import optimizers
 from .loss import BER_well, MSE, SNR, Qsq
@@ -57,10 +57,17 @@ def train_model(config: dict):
     # data loading
     device = config['device']
     Pch = None if 'Pch' not in config.keys() else config['Pch']
-    trainset = opticDataset(Nch=config['Nch'], Rs=config['Rs'], M=config['Memory'], Pch=Pch, path=config['train_path'], idx=config['idx_train'], power_fix=False)
-    testset = opticDataset(Nch=config['Nch'], Rs=config['Rs'], M=config['Memory'], Pch=Pch, path=config['test_path'], idx=config['idx_test'], power_fix=False)
-    train_loader = DataLoader(trainset, batch_size=config['batch_size'], shuffle=True)
-    test_loader = DataLoader(testset, batch_size=config['batch_size'], shuffle=False)
+    if 'train_symbols' in config.keys():
+        trainset = MyDataset(path=config['train_path'], Nch=config['Nch'], Rs=config['Rs'], Pch=Pch, window_size=config['Memory'], truncate=config['idx_train'][0], transform='Rx_CDCDSP_PBC', Nsymb=config['train_symbols'])
+        train_loader = DataLoader(trainset, batch_size=config['batch_size'], shuffle=True)
+        testset = MyDataset(path=config['test_path'], Nch=config['Nch'], Rs=config['Rs'], Pch=Pch, window_size=config['Memory'], truncate=config['idx_train'][0], transform='Rx_CDCDSP_PBC', Nsymb=200000)
+        test_loader = DataLoader(testset, batch_size=config['batch_size'], shuffle=False)
+    else:
+        trainset = opticDataset(Nch=config['Nch'], Rs=config['Rs'], M=config['Memory'], Pch=Pch, path=config['train_path'], idx=config['idx_train'], power_fix=False)
+        train_loader = DataLoader(trainset, batch_size=config['batch_size'], shuffle=True)
+        testset = opticDataset(Nch=config['Nch'], Rs=config['Rs'], M=config['Memory'], Pch=Pch, path=config['test_path'], idx=config['idx_test'], power_fix=False)
+        test_loader = DataLoader(testset, batch_size=config['batch_size'], shuffle=False)
+
 
     # define model and load model
     model = models[config['model_name']]
@@ -73,11 +80,19 @@ def train_model(config: dict):
         net.nn.load_state_dict(checkpoint['model'])
         print('NN loaded')
 
+    if config['model_name'] == 'eqAMPBCaddNN' and 'pbc_path' in  config.keys():
+        checkpoint = torch.load(config['pbc_path'])
+        net.pbc.load_state_dict(checkpoint['model'])
+        print('PBC loaded')
+
     # define optimizer
     if config['opt'] == 'AlterOptimizer':
         assert config['model_name'] == 'eqAMPBCaddNN', 'AlterOptimizer only support eqAMPBCaddNN'
         alternate = False if 'alternate' not in config.keys() else config['opt info']['alternate']
         optimizer = optimizers[config['opt']]([net.pbc.parameters(), net.nn.parameters()], config['opt info']['lr_list'], alternate=alternate)
+    elif config['opt'] == 'Adam-asym':
+        optimizer = optim.Adam([{'params': net.pbc.parameters(), 'lr': config['opt info']['lr_list'][0]}, 
+                                {'params': net.nn.parameters(), 'lr': config['opt info']['lr_list'][1]}] )
     elif config['opt'] in optimizers.keys(): 
         if 'opt info' in config.keys():
             optimizer = optimizers[config['opt']](filter(lambda p: p.requires_grad, net.parameters()), **config['opt info'])

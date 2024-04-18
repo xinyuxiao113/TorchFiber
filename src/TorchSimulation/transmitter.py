@@ -313,7 +313,7 @@ def simpleWDMTx(seed, batch, M, Nbits, sps, Nch, Nmodes, Rs, freqspace, Pch_dBm=
 
     # pulse shape
     pulse = pulseShape(pulse_type, sps, N=Ntaps, alpha=roll)
-    pulse = torch.tensor(pulse, dtype=torch.complex128).to('cuda:0')
+    pulse = torch.tensor(pulse, dtype=torch.complex128).to(device)
 
     x = torch.randint(0, 2, (batch, Nbits, Nch, Nmodes), device=device)
     symbs = mod.modulate(x, dim=1)
