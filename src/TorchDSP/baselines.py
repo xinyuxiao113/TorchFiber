@@ -196,8 +196,10 @@ def DDLMS(E: torch.Tensor, truth: torch.Tensor, sps:int, lead_symbols:int=2000) 
     task_info = torch.zeros(E.shape[0], 4)
 
     DDLMS = ADF(method='ddlms', taps=32, Nmodes=E.shape[-1], batch_size=E.shape[0], mode='test', lead_symbols=lead_symbols)  # mode='test'很关键
+    DDLMS.eval()
     DDLMS = DDLMS.to(E.device)
-    x = DDLMS(signal_input, signal_pilot, task_info)
+    with torch.no_grad():
+        x = DDLMS(signal_input, signal_pilot, task_info)
     return x
 
 

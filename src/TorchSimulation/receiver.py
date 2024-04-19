@@ -224,7 +224,7 @@ def simpleRx(seed, trans_data, tx_config, chid, rx_sps, FO=0, lw=0, phi_lo=0,Plo
     Input:
         seed: random seed.
         trans_data: [batch, Nfft, Nmodes] or [Nfft, Nmodes]
-        tx_config: a dict with keys {'Rs', 'freqspace', 'pulse', 'Nch', 'sps'}
+        tx_config: a dict with keys {'Rs', 'freqspace', 'pulse', 'Nch', 'sps'}   with unit [Hz, Hz, Array, int, int] 
         chid: channel id.
         rx_sps: rx sps.
         FO: float. frequency offset. [Hz]

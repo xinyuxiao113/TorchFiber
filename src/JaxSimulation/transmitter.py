@@ -320,9 +320,12 @@ def simpleWDMTx(symb_only,key, batch, M, Nbits, sps, Nch, Nmodes, Rs, freqspace,
         signal_list.append(jax.device_get(signal))
         symb_list.append(jax.device_get(SymbTx))
         sigWDM, SymbTx = None, None
-
     signal = np.stack(signal_list, axis=0)
     symb = np.stack(symb_list, axis=0)
+
+    sigWDM, SymbTx = jax.vmap(Tx, in_axes=(0, None), out_axes=0)(key_full, pulse)             # [batch, Nsymb*SpS, Nch, Nmodes]
+    signal = wdm_merge(sigWDM, Rs*sps, Nch, freqspace)  # [Nsymb*SpS, Nmodes]
+
     config = {'key':key, 'batch':batch, 'M':16, 'Nbits':Nbits, 'sps':sps, 'Nch':Nch, 'Nmodes':Nmodes, 'Rs':Rs, 'freqspace':freqspace, 'Pch_dBm':Pch_dBm,'Ai':Ai, 'Vpi':Vpi, 'Vb':Vb, 'Ntaps':Ntaps, 'roll':roll, 'pulse_type':pulse_type, 'shape_info':'sigWDM:[batch, Nsymb*SpS, Nch, Nmodes],  SymbTx:[batch, Nsymb, Nch, Nmodes]', 'pulse':pulse, 'Fc':299792458/1550E-9}
     return {'signal':signal, 'SymbTx':symb, 'config':config}  #[batch, Nsymb*SpS, Nmodes]   [batch, Nsymb, Nch, Nmodes]
 

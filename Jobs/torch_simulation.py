@@ -1,7 +1,7 @@
 """
 Jax Simulation of optical fiber transmission.
 """
-import argparse,numpy as np,  os, pickle, yaml, torch
+import argparse,numpy as np,  os, pickle, yaml, torch, time
 from src.TorchSimulation.transmitter import simpleWDMTx,choose_sps
 from src.TorchSimulation.channel import manakov_ssf, choose_dz, get_beta2
 from src.TorchSimulation.receiver import simpleRx
@@ -10,12 +10,13 @@ import warnings
 warnings.filterwarnings('error')
 
 parser = argparse.ArgumentParser(description="Simulation Configuration")
-parser.add_argument('--config', type=str, default='configs/simulation/torch.yaml', help='Path to the YAML configuration file')
-parser.add_argument('--seed',   type=int, default=1232, help='random seed for simulation')
+parser.add_argument('--path',   type=str, default='dataset/train.h5', help='dataset path', required=True)
+parser.add_argument('--config', type=str, default='configs/simulation/torch_train.yaml', help='Path to the YAML configuration file', required=True)
 _args = parser.parse_args()
 with open(_args.config, 'r') as file:
     args = yaml.safe_load(file)
-args['seed'] = _args.seed
+
+args['seed'] = int((time.time() * 1e6) % 1e9)  # 转换时间戳为整数种子
 
 
 # Set Global params
@@ -39,6 +40,8 @@ np.random.seed(args['seed'])
 
 import h5py
 
+t0 = time.time()
+
 for Nch in args['Nch']:
     for Rs in args['Rs']:
         Rs = Rs * 1e9   # symbol rate [Hz]
@@ -53,39 +56,19 @@ for Nch in args['Nch']:
             ch_seed = np.random.randint(0, 2**32)
             rx_seed = np.random.randint(0, 2**32)
 
-            # tx_path = args['path'] + f'/Tx_Nch{Nch}_{int(Rs/1e9)}GHz_Pch{Pch_dBm}dBm'
-            # channel_path = args['path'] + f'/Channel_Nch{Nch}_{int(Rs/1e9)}GHz_Pch{Pch_dBm}dBm'
-
             ## Step 1: Tx
             tx_data = simpleWDMTx(tx_seed, args['batch'], M, args['Nbits'], sps, Nch, args['Nmodes'], Rs, freqspace, Pch_dBm, device=device)
-            # with open(tx_path, 'wb') as file: pickle.dump(tx_data['config'], file)
 
             ## Step 2: channel
             trans_data = manakov_ssf(tx_data, ch_seed, Ltotal, Lspan, hz, alpha, D, gamma, Fc,amp, NF, order=1, openPMD=PMD, device=device)
-            # with open(channel_path, 'wb') as file: pickle.dump(trans_data, file)
 
-
-            ## Step 3: Rx 
-            rx_data = simpleRx(rx_seed, trans_data['signal'], tx_data['config'], Nch//2, rx_sps=2, method='frequency cut', device=device)
-
-
-            Rx = rx_data['signal']    # [B, L*sps, Nmodes]
-            Tx = tx_data['SymbTx'][:,:,tx_data['config']['Nch']//2,:].to(torch.complex64)/np.sqrt(10) # [B, L, Nmodes]
-            Fs = torch.tensor([2*tx_data['config']['Rs']]*args['batch'])   # [B,]
-
-            E = CDC(Rx.to('cuda:0'), Fs.to('cuda:0'),  2000e3)  # [B, Nfft, Nmodes]
-            F = DDLMS(E.to('cpu'), Tx.to('cpu'), sps=2, lead_symbols=2000)
-
-            info = torch.tensor([Pch_dBm, args['Fc'], Rs*2,  Nch])
-            info = info.repeat(F.val.shape[0],1)
-            data = (F.val, Tx[:,F.t.start:F.t.stop], info)
 
             attrs = {
                     'Nmodes': args['Nmodes'],
-                    'Rs': int(Rs/1e9),
                     'Nch': Nch,
-                    'Pch': Pch_dBm,
-                    'samplerate(Hz)': Rs*2,
+                    'Rs(GHz)': int(Rs/1e9),
+                    'Pch(dBm)': Pch_dBm,
+                    'Lspan(km)': Lspan,
                     'Fc(Hz)': args['Fc'],
                     'distance(km)': Ltotal,
                     'beta2(s^2/km)': beta2,
@@ -97,30 +80,40 @@ for Nch in args['Nch']:
                     'amp': amp,
                     'PMD': PMD,
                     'Lcorr(km)': Lcorr,
+                    'M(QAM-order)': M, 
+                    'batch': args['batch'],
+                    'tx_sps': sps,
+                    'freqspace(Hz)': freqspace,
+                    'rx_seed': rx_seed,
                 }
-
-            with h5py.File(args['path'], 'a') as hdf:
-                file = hdf.create_group(f'Rs{int(Rs/1e9)}_Nch{Nch}_Pch{Pch_dBm}_{args["seed"]}')
-                data = file.create_dataset('Rx', data=Rx.cpu().numpy())
-                data.dims[0].label = 'batch'
-                data.dims[1].label = 'time'
-                data.dims[2].label = 'modes'
-                data.attrs.update({'sps':2, 'start': 0, 'stop': 0})
-                data = file.create_dataset('Tx', data=Tx.cpu().numpy())
-                data.dims[0].label = 'batch'
-                data.dims[1].label = 'time'
-                data.dims[2].label = 'modes'
-                data = file.create_dataset('Rx_CDCDSP', data=F.val.cpu().numpy())
-                data.dims[0].label = 'batch'
-                data.dims[1].label = 'time'
-                data.dims[2].label = 'modes'
-                data = file.create_dataset('info', data=info.cpu().numpy())
-                data.dims[0].label = 'batch'
-                data.dims[1].label = 'task: Pch, Fc, Rs, Nch'
-                file.attrs.update(attrs)
-                file['Rx_CDCDSP'].attrs.update({'sps':F.t.sps, 'start': F.t.start, 'stop': F.t.stop})
-
+            {'Rs', 'freqspace', 'pulse', 'Nch', 'sps'}
             
+
+            with h5py.File(_args.path, 'a') as hdf:
+                if f'Nmodes{args["Nmodes"]}_Rs{int(Rs/1e9)}_Nch{Nch}_Pch{Pch_dBm}_{args["seed"]}' in hdf.keys():
+                    print(f'Nmodes{args["Nmodes"]}_Rs{int(Rs/1e9)}_Nch{Nch}_Pch{Pch_dBm}_{args["seed"]} already exists.')
+                    continue
+                file = hdf.create_group(f'Nmodes{args["Nmodes"]}_Rs{int(Rs/1e9)}_Nch{Nch}_Pch{Pch_dBm}_{args["seed"]}')
+                file.attrs.update(attrs)
+
+                data = file.create_dataset('SymbTx', data=tx_data['SymbTx'].cpu().numpy())  
+                data.dims[0].label = 'batch'
+                data.dims[1].label = 'time'
+                data.dims[2].label = 'Nch'
+                data.dims[3].label = 'modes'
+
+                data = file.create_dataset('pulse', data=tx_data['config']['pulse'].cpu().numpy())
+                data.attrs['sps'] = tx_data['config']['sps']
+
+                data = file.create_dataset('SignalRx', data=trans_data['signal'].cpu().numpy())
+                data.dims[0].label = 'batch'
+                data.dims[1].label = 'time'
+                data.dims[2].label = 'modes'
+                data.attrs['sps'] = tx_data['config']['sps']
+
+t1 = time.time()
+print('simulation is complete!')   
+print(f'Total cost time: {t1-t0}.') 
 
             
 

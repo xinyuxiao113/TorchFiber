@@ -1,3 +1,18 @@
+'''
+group:
+- pulse
+- SymbTx  
+- SignalRx
+- Rx(sps=2,chid=0)
+    - info            # [Pch, Fi, Rs, Nch]
+    - Tx
+    - Rx
+    - Rx_CDC 
+    - Rx_DBP%d
+    - Rx_CDCDDLMS
+    - Rx_DBP%dDDLMS
+    - Rx_CDCDDLMS_PBC
+'''
 import h5py, argparse
 import numpy as np
 import torch
@@ -18,12 +33,13 @@ net.cuda()
 
 with h5py.File(args.path,'a') as f:
     for key in f.keys():
-        if f[key].attrs['Nch'] == 3 and f[key].attrs['Rs'] == 40 and 'Rx_CDCDSP_PBC' not in f[key].keys():
+        if f[key].attrs['Nch'] == 3 and f[key].attrs['Rs(GHz)'] == 40 and 'Rx_CDCDDLMS_PBC' not in f[key].keys():
+            subgrp = f[key]['Rx(sps=2,chid=0)']
             print('PBC testing for:', key)
             
-            s = f[key]['Rx_CDCDSP'].attrs['start']
-            e = f[key]['Rx_CDCDSP'].attrs['stop']
-            Rx = torch.tensor(f[key]['Rx_CDCDSP'][...])
+            s = f[key]['Rx_CDCDDLMS'].attrs['start']
+            e = f[key]['Rx_CDCDDLMS'].attrs['stop']
+            Rx = torch.tensor(f[key]['Rx_CDCDDLMS'][...])
             Tx = torch.tensor(f[key]['Tx'][:,s:e])
             info = torch.tensor(f[key]['info'][:])
 
@@ -42,7 +58,7 @@ with h5py.File(args.path,'a') as f:
                 pbcs.append(PBC.val.cpu().data)
             pbcout = torch.cat(pbcs, dim=1)
 
-            data = f[key].create_dataset('Rx_CDCDSP_PBC', data=pbcout.numpy())
+            data = f[key].create_dataset('Rx_CDCDDLMS_PBC', data=pbcout.numpy())
             data.attrs['start'] = s + (net.overlaps//2)
             data.attrs['stop'] = e - (net.overlaps//2)
             data.attrs['sps'] = 1
