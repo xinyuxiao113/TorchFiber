@@ -111,9 +111,9 @@ def rx(E: torch.Tensor, chid:int, sps_in:int,  sps_out:int, Nch:int, Fs: float, 
     omega = get_omega(Fs, Nfft)
     f = omega/(2*np.pi)  # [Nfft]
     if E.ndim == 2:
-        H = (torch.abs(f - k*freqspace)<freqspace/2)[:,None]
+        H = (torch.abs(f - k*freqspace)<freqspace/2 )[:,None]
     elif E.ndim == 3:
-        H = (torch.abs(f - k*freqspace)<freqspace/2)[None, :,None]
+        H = (torch.abs(f - k*freqspace)<freqspace/2 )[None, :,None]
     else:
         raise(ValueError)
     
@@ -237,44 +237,38 @@ def simpleRx(seed, trans_data, tx_config, chid, rx_sps, FO=0, lw=0, phi_lo=0,Plo
 
     '''
     torch.manual_seed(seed)
-    if type(tx_config) != dict:
-        tx_config = tx_config.__dict__
-        
-    if 'sps' not in tx_config:
-        tx_config['sps'] = tx_config['SpS']
-    if 'freqspace' not in tx_config:
-        tx_config['freqspace'] = tx_config['freqSpac']
+    if type(tx_config) != dict: tx_config = tx_config.__dict__ 
+    if 'sps' not in tx_config: tx_config['sps'] = tx_config['SpS']
+    if 'freqspace' not in tx_config: tx_config['freqspace'] = tx_config['freqSpac']
     assert (trans_data.shape[-1] == 1 or trans_data.shape[-1] == 2)
-        
+
         
     dims = trans_data.ndim
     batch = trans_data.shape[0]
     N = trans_data.shape[-2]
     Ta = 1 / tx_config['Rs'] / tx_config['sps']
-    freq = (chid - tx_config['Nch'] //2) * tx_config['freqspace']
+    freq = (chid - (tx_config['Nch'] //2)) * tx_config['freqspace']
     sigWDM = trans_data.to(device)  # [batch, Nfft, Nmodes] or [Nfft, Nmodes]
-    
-    
-    sigLO, ϕ_pn_lo = local_oscillator(batch, Ta, FO, lw, phi_lo, freq, N, Plo_dBm, device=device)
-    
 
-    ## step 1: coherent receiver
-    CR1 = torch.vmap(coherentReceiver, in_dims=(-1,None), out_dims=-1)
-    if dims == 2:
-        sigRx1 = CR1(sigWDM, sigLO)  # [Nfft, Nmodes], [Nfft]
-    elif dims == 3:
-        CR2 = torch.vmap(CR1, in_dims=(0,0), out_dims=0)
-        sigRx1 = CR2(sigWDM, sigLO)  # [batch, Nfft, Nmodes], [batch, Nfft]
-    else:
-        raise(ValueError)
-        
+    sigLO, phi_pn_lo = local_oscillator(batch, Ta, FO, lw, phi_lo, freq, N, Plo_dBm, device=device)
 
-    # step 2: match filtering  
     if method == 'frequency cut':
 
-        sigRx2 = rx(sigRx1, chid, tx_config['sps'], rx_sps, tx_config['Nch'], 1/Ta, tx_config['freqspace'])
+        sigRx2 = rx(sigWDM, chid, tx_config['sps'], rx_sps, tx_config['Nch'], 1/Ta, tx_config['freqspace'])
+        sigRx2 = sigRx2 * torch.exp(-1j*phi_pn_lo[:,::(tx_config['sps']//rx_sps),None])
 
     elif method == 'filtering':
+        
+        ## step 1: coherent receiver
+        CR1 = torch.vmap(coherentReceiver, in_dims=(-1,None), out_dims=-1)
+        if dims == 2:
+            sigRx1 = CR1(sigWDM, sigLO)  # [Nfft, Nmodes], [Nfft]
+        elif dims == 3:
+            CR2 = torch.vmap(CR1, in_dims=(0,0), out_dims=0)
+            sigRx1 = CR2(sigWDM, sigLO)  # [batch, Nfft, Nmodes], [batch, Nfft]
+        else:
+            raise(ValueError)
+            
         filter1 = torch.vmap(circFilter, in_dims=(None, -1), out_dims=-1)
         if dims == 2:
             sigRx2 = filter1(tx_config['pulse'].to(device), sigRx1)  
@@ -293,4 +287,4 @@ def simpleRx(seed, trans_data, tx_config, chid, rx_sps, FO=0, lw=0, phi_lo=0,Plo
     sigRx = sigRx2/L2(sigRx2)
     
     config = {'seed':seed,'chid':chid,'rx_sps':rx_sps,'FO': FO,'lw':lw,'phi_lo':phi_lo,'Plo_dBm':Plo_dBm,'method':method}
-    return {'signal':sigRx.to('cpu'), 'phase noise':ϕ_pn_lo, 'config':config}
+    return {'signal':sigRx.to('cpu'), 'phase noise':phi_pn_lo, 'config':config}

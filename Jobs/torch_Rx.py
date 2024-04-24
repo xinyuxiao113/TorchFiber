@@ -9,6 +9,11 @@ group:
     - info            # [Pch, Fi, Rs, Nch]
     - Tx
     - Rx
+- Rx(sps=2,chid=0,method=filtering)
+    - info            # [Pch, Fi, Rs, Nch]
+    - Tx
+    - Rx
+...
 """
 
 import h5py
@@ -25,28 +30,31 @@ parser.add_argument('--path',   type=str, default='dataset/test.h5', help='datas
 parser.add_argument('--rx_sps',   type=int, default=2, help='Rx sps')
 parser.add_argument('--rx_chid',   type=int, default=0, help='receiver Nch id  respect to center channel')
 parser.add_argument('--device',   type=str, default='cuda:0', help='device')
+parser.add_argument('--method', type=str, default='frequency cut', help='frequency cut or filtering', required=False)
 args = parser.parse_args()
 
 
 t0 = time.time()
-
 with h5py.File(args.path,'a') as f:
     for key in f.keys():
         group = f[key]
         rx_seed = group.attrs['rx_seed']
         trans_data = torch.from_numpy(group['SignalRx'][...])
         Nch = group.attrs['Nch']
-        config = {'Rs': group.attrs['Rs(GHz)']*1e9, 'freqspace': group.attrs['freqspace(Hz)'], 'pulse': torch.from_numpy(group['pulse'][...]), 'Nch': group.attrs['Nch'], 'sps': group['SignalRx'].attrs['sps']} 
-        rx_data = simpleRx(rx_seed, trans_data, config, Nch//2 + args.rx_chid, rx_sps=args.rx_sps, method='frequency cut', device=args.device)
 
-        if f'Rx(sps={args.rx_sps},chid={args.rx_chid})' in group.keys():
-            print(f'Rx(sps={args.rx_sps},chid={args.rx_chid}) already exists in {key}')
+
+        if f'Rx(sps={args.rx_sps},chid={args.rx_chid},method={args.method})' in group.keys():
+            print(f'Rx(sps={args.rx_sps},chid={args.rx_chid},method={args.method}) already exists in {key}')
             continue
 
-        subgrp = group.create_group(f'Rx(sps={args.rx_sps},chid={args.rx_chid})')
+        config = {'Rs': group.attrs['Rs(GHz)']*1e9, 'freqspace': group.attrs['freqspace(Hz)'], 'pulse': torch.from_numpy(group['pulse'][...]), 'Nch': group.attrs['Nch'], 'sps': group['SignalRx'].attrs['sps']} 
+        rx_data = simpleRx(rx_seed, trans_data, config, Nch//2 + args.rx_chid, rx_sps=args.rx_sps, method=args.method, device=args.device)
+
+        subgrp = group.create_group(f'Rx(sps={args.rx_sps},chid={args.rx_chid},method={args.method})')
         subgrp.attrs['seed'] = rx_seed
         subgrp.attrs['sps'] = args.rx_sps
         subgrp.attrs['chid'] = args.rx_chid
+        subgrp.attrs['method'] = args.method
 
         data = subgrp.create_dataset('Tx', data=group['SymbTx'][:,:,Nch//2 + args.rx_chid,:]/np.sqrt(10))
         data.dims[0].label = 'batch'

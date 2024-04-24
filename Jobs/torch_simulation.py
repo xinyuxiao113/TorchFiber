@@ -48,7 +48,11 @@ for Nch in args['Nch']:
         for Pch_dBm in args['Pch']:
             print(f'\n#######      Nch:{Nch}       Rs:{int(Rs/1e9)}GHz     Pch:{Pch_dBm}dBm        #######', flush=True)
             freqspace = Rs * spacing_factor
+
             sps = choose_sps(Nch, freqspace, Rs)
+            if 'tx_sps_scale' in args.keys():
+                sps = Nch * args.get('tx_sps_scale', 2)
+                
             hz = choose_dz(freqspace, Lspan, Pch_dBm, Nch, beta2, gamma)
             print(f'#######     Tx sps = {sps},  simulation hz={hz}km       #######', flush=True)
             
@@ -95,6 +99,14 @@ for Nch in args['Nch']:
                     continue
                 file = hdf.create_group(f'Nmodes{args["Nmodes"]}_Rs{int(Rs/1e9)}_Nch{Nch}_Pch{Pch_dBm}_{args["seed"]}')
                 file.attrs.update(attrs)
+
+                if 'save_SignalTx' in args.keys() and args['save_SignalTx'] == True:
+                    data = file.create_dataset('SignalTx', data=tx_data['signal'].cpu().numpy())
+                    data.dims[0].label = 'batch'
+                    data.dims[1].label = 'time'
+                    data.dims[2].label = 'modes'
+                    data.attrs['sps'] = sps
+
 
                 data = file.create_dataset('SymbTx', data=tx_data['SymbTx'].cpu().numpy())  
                 data.dims[0].label = 'batch'

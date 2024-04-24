@@ -20,7 +20,7 @@ def choose_sps(Nch:int, freqspace:float, Rs:float)->int:
 
 
 def circular_noise(noise):
-    '''a
+    '''
     Modify a noise to 2pi circular.
     1D -> 1D.
     '''
@@ -174,7 +174,7 @@ def upsample(tensor, dim, N):
     return result
 
 
-def phaseNoise(batch, lw, Nsamples, Ts, dtype=torch.float32):
+def phaseNoise(batch, lw, Nsamples, Ts, dtype=torch.float64):
     '''
     Generate phase noise.
     Input:
@@ -188,33 +188,38 @@ def phaseNoise(batch, lw, Nsamples, Ts, dtype=torch.float32):
     sigma2 = 2*np.pi*lw*Ts    
     phi = torch.randn(batch, Nsamples, dtype=dtype) * np.sqrt(sigma2)
   
-    return torch.cumsum(phi, dim=0)
+    return torch.cumsum(phi, dim=1)
 
 
 
 def local_oscillator(batch, Ta, FO,  lw, phi_lo,  freq, N, Plo_dBm, device='cuda:0'):
     '''
-    batch: batch size.
-    Ta: sample time. [s]
-    FO: frequencey offset. [Hz]
-    lw: linewidth.    [Hz]
-    phi_lo: init phase error.  [rad]
-    freq: frequency. [Hz]
-    N: signal length. 
-    Plo_dBm: power [dBm]
+    Input:
+        batch: batch size.
+        Ta: sample time. [s]
+        FO: frequencey offset. [Hz]
+        lw: linewidth.    [Hz]
+        phi_lo: init phase error.  [rad]
+        freq: frequency. [Hz]
+        N: signal length. 
+        Plo_dBm: power [dBm]
+    Output:
+        sigLO: [batch, Nfft]
+        phi_noise: [batch, Nfft]
     '''
           
     Plo     = 10**(Plo_dBm/10)*1e-3            # power in W
-    Δf_lo   = freq + FO              # downshift of the channel to be demodulated 
+    Delta_f   = freq + FO              # downshift of the channel to be demodulated 
                                     
     # generate LO field
-    π       = torch.pi
-    t       = torch.arange(0, N) * Ta
-    phi = phi_lo + 2*π*Δf_lo*t[None, :] +  phaseNoise(batch, lw, N, Ta)    # gaussian process
-    phi = circular_noise(phi)
+    t  = torch.arange(0, N).to(torch.float64) * Ta
+    pn = phaseNoise(batch, lw, N, Ta)   
+    phi = phi_lo + 2*torch.pi* Delta_f *t[None, :] +  pn
+    phi_noise =  phi_lo + 2*torch.pi* FO *t[None, :] +  pn
+    # phi = circular_noise(phi)
     sigLO   = np.sqrt(Plo) * torch.exp(1j*phi)
 
-    return sigLO.to(device), phi.to(device)
+    return sigLO.to(device), phi_noise.to(device)
 
 
 def freq_grid(Nch: int, freqspace: float) -> torch.Tensor:
@@ -226,7 +231,7 @@ def freq_grid(Nch: int, freqspace: float) -> torch.Tensor:
     Output:
         jax.Array.
     '''
-    freqGrid = torch.arange(-int(Nch/2), int(Nch/2)+1,1) * freqspace
+    freqGrid = torch.arange(-int(Nch/2), int(Nch/2)+1,1).to(torch.float64) * freqspace
     if (Nch % 2) == 0:
         freqGrid += freqspace/2
     
@@ -244,8 +249,11 @@ def wdm_base(Nfft: int, fa: float, freqGrid: torch.Tensor) -> torch.Tensor:
     Output:
         jax.Array with shape [Nfft, Nch].
     '''
-    t = torch.arange(0, Nfft)
-    wdm_wave = torch.exp(1j*2*torch.pi/fa * freqGrid[None,:]*t[:,None]) # [Nsymb*SpS, Nch]
+    t = torch.arange(0, Nfft).to(torch.float64) 
+    assert t.dtype == torch.float64
+    Nch = freqGrid.shape[0]
+    wdm_wave = torch.exp(1j*2*torch.pi * (freqGrid[None,:]/fa) *t[:,None] ) # [Nsymb*SpS, Nch]
+    assert wdm_wave.dtype == torch.complex128
     return wdm_wave
 
 

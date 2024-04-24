@@ -180,7 +180,7 @@ def DBP(E: torch.Tensor, length: float, dz: float, Fs:torch.Tensor, power_dbm: t
 
 
 
-def DDLMS(E: torch.Tensor, truth: torch.Tensor, sps:int, lead_symbols:int=2000) -> TorchSignal:
+def DDLMS(E: torch.Tensor, truth: torch.Tensor, sps:int, lead_symbols:int=2000, lr=[1/2**6, 1/2**7], taps=32) -> TorchSignal:
     '''
      DDLMS alg.  downsample input signal from sps to 1.
      Input:
@@ -195,7 +195,8 @@ def DDLMS(E: torch.Tensor, truth: torch.Tensor, sps:int, lead_symbols:int=2000) 
     signal_pilot = TorchSignal(truth, TorchTime(0, 0, 1))
     task_info = torch.zeros(E.shape[0], 4)
 
-    DDLMS = ADF(method='ddlms', taps=32, Nmodes=E.shape[-1], batch_size=E.shape[0], mode='test', lead_symbols=lead_symbols)  # mode='test'很关键
+    meta_args = {'lr_init': lr}
+    DDLMS = ADF(method='ddlms', taps=taps, Nmodes=E.shape[-1], batch_size=E.shape[0], mode='test', lead_symbols=lead_symbols, meta_args=meta_args)  # mode='test'很关键
     DDLMS.eval()
     DDLMS = DDLMS.to(E.device)
     with torch.no_grad():
