@@ -1,5 +1,7 @@
 data/*
 dataset/*
+dataset_A800/*
+dataset_A800_small/*
 dataset_exp/*
 models/*
 _models/*
