@@ -200,11 +200,11 @@ class MetaLSTMtest(nn.Module):
         dimension: 6  -> hidden_dim -> hidden_dim -> 1
                     LSTM          LSTM     linear_out 
     '''
-    def __init__(self, step_max=5e-2, hiddden_dim=16, num_layers=2):
+    def __init__(self, step_max=5e-2, hidden_dim=16, num_layers=2):
         # control lr in a interval !!
         super(MetaLSTMtest, self).__init__()
-        self.LSTM = ComplexLSTM(6, hiddden_dim, num_layers)                                   
-        self.linear_out = nn.Sequential( ComplexLinear(hiddden_dim,1))
+        self.LSTM = ComplexLSTM(6, hidden_dim, num_layers)                                   
+        self.linear_out = nn.Sequential( ComplexLinear(hidden_dim,1))
         self.step_max = step_max
 
     def forward(self, opt_state, grads, params, more_info):    # more_info = (u, d, z, e)
@@ -263,12 +263,12 @@ class MetaLSTMplus(nn.Module):
         dimension: 6 -> hidden_dim -> hidden_dim -> hidden_dim -> 2*hidden_dim -> 1
                   linear_in       LSTM          LSTM     linear_out_1    linear_out_2   
     '''
-    def __init__(self, step_max=5e-2, hiddden_dim=16, num_layers=2):
+    def __init__(self, step_max=5e-2, hidden_dim=16, num_layers=2):
         # control lr in a interval !!
         super(MetaLSTMplus, self).__init__()
-        self.linear_in = nn.Sequential(ComplexLinear(6, hiddden_dim), CReLU())
-        self.LSTM = ComplexLSTM(hiddden_dim, hiddden_dim, num_layers)                                   
-        self.linear_out = nn.Sequential(ComplexLinear(hiddden_dim, 2*hiddden_dim), CReLU(), ComplexLinear(2*hiddden_dim,1))
+        self.linear_in = nn.Sequential(ComplexLinear(6, hidden_dim), CReLU())
+        self.LSTM = ComplexLSTM(hidden_dim, hidden_dim, num_layers)                                   
+        self.linear_out = nn.Sequential(ComplexLinear(hidden_dim, 2*hidden_dim), CReLU(), ComplexLinear(2*hidden_dim,1))
         self.step_max = step_max
 
     def forward(self, opt_state, grads, params, more_info):    # more_info = (u, d, z, e)
@@ -328,11 +328,11 @@ class MetaGRUOpt(nn.Module):
         dimension: 6 -> hidden_dim -> hidden_dim -> hidden_dim -> 1
                   linear_in       LSTM          LSTM     linear_out
     '''
-    def __init__(self, step_max=5e-2, hiddden_dim=16, num_layers=2):
+    def __init__(self, step_max=5e-2, hidden_dim=16, num_layers=2):
         super(MetaGRUOpt, self).__init__()
-        self.LSTM = ComplexGRU(hiddden_dim, hiddden_dim, num_layers)    
-        self.linear_in = nn.Sequential(ComplexLinear(6, hiddden_dim), CReLU())                           
-        self.linear_out = nn.Sequential( ComplexLinear(hiddden_dim,1))
+        self.LSTM = ComplexGRU(hidden_dim, hidden_dim, num_layers)    
+        self.linear_in = nn.Sequential(ComplexLinear(6, hidden_dim), CReLU())                           
+        self.linear_out = nn.Sequential( ComplexLinear(hidden_dim,1))
         self.step_max = step_max
 
     def forward(self, opt_state, grads, params, more_info):    # more_info = (u, d, z, e)
@@ -393,12 +393,12 @@ class MetaGRUtest(nn.Module):
         dimension: 2 -> hidden_dim -> hidden_dim -> hidden_dim -> 1
                   linear_in       LSTM          LSTM     linear_out
     '''
-    def __init__(self, step_max=5e-2, hiddden_dim=16, num_layers=2):
+    def __init__(self, step_max=5e-2, hidden_dim=16, num_layers=2):
         # control lr in a interval !!
         super(MetaGRUtest, self).__init__()
-        self.LSTM = ComplexGRU(hiddden_dim, hiddden_dim, num_layers)    
-        self.linear_in = nn.Sequential(ComplexLinear(2,hiddden_dim), CReLU())                           
-        self.linear_out = nn.Sequential( ComplexLinear(hiddden_dim,1))
+        self.LSTM = ComplexGRU(hidden_dim, hidden_dim, num_layers)    
+        self.linear_in = nn.Sequential(ComplexLinear(2,hidden_dim), CReLU())                           
+        self.linear_out = nn.Sequential( ComplexLinear(hidden_dim,1))
         self.step_max = step_max
 
     def forward(self, opt_state, grads, params, more_info):    # more_info = (u, d, z, e)

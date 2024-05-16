@@ -1,6 +1,39 @@
 import pickle, torch, numpy as np, time, random, os, h5py
 from .core import TorchInput, TorchSignal, TorchTime
 from torch.utils.data import Dataset
+import h5py, numpy as np, torch
+from src.TorchDSP.loss import Qsq
+from src.TorchSimulation.receiver import  BER
+
+def baselines(path, Nch, Rs, P = np.arange(-3, 8)):
+
+    def get_grp(f, Nch, Rs, Pch, Nsymb, NF, SF, L=2000, tag=',method=frequency cut'):
+        for key in f.keys():
+            if f[key].attrs['Nch'] == Nch and f[key].attrs['Rs(GHz)'] == Rs and f[key].attrs['Pch(dBm)'] == Pch and f[key]['SymbTx'].shape[1] == Nsymb and f[key].attrs['NF(dB)'] == NF and f[key].attrs['freqspace(Hz)']/1e9 / f[key].attrs['Rs(GHz)'] == SF and f[key].attrs['distance(km)'] == L:
+                return f[key][f'Rx(sps=2,chid=0{tag})']
+            
+    def Q_power(f, Nch, pch, Rs,  method='Rx_CDCDDLMS(taps=32,lr=[0.015625, 0.0078125])'):
+        grp = get_grp(f, Nch, Rs, pch, 500000, 4.5, 1.2, 2000)
+        if 'Qsq' not in grp[method].attrs.keys():
+            Q = Qsq(np.mean(BER(torch.from_numpy(grp[method][0])[100000:], torch.from_numpy(grp['Tx'][0,7:-8])[100000:])['BER']))
+            grp[method].attrs['Qsq'] = Q
+        else:
+            Q = grp[method].attrs['Qsq']
+        return Q
+
+    
+    Q = {}
+
+    with h5py.File(path, 'a') as f:
+        Q['CDC'] = [Q_power(f, Nch, pch, Rs, 'Rx_CDCDDLMS(taps=32,lr=[0.015625, 0.0078125])') for pch in P]
+        Q['DBP1'] = [Q_power(f, Nch, pch, Rs, 'Rx_DBP1DDLMS(taps=32,lr=[0.015625, 0.0078125])') for pch in P]
+        Q['DBP2'] = [Q_power(f, Nch, pch, Rs, 'Rx_DBP2DDLMS(taps=32,lr=[0.015625, 0.0078125])') for pch in P]
+        Q['DBP4'] = [Q_power(f, Nch, pch, Rs, 'Rx_DBP4DDLMS(taps=32,lr=[0.015625, 0.0078125])') for pch in P]
+        Q['DBP8'] = [Q_power(f, Nch, pch, Rs, 'Rx_DBP8DDLMS(taps=32,lr=[0.015625, 0.0078125])') for pch in P]
+        Q['DBP16'] = [Q_power(f, Nch, pch, Rs, 'Rx_DBP16DDLMS(taps=32,lr=[0.015625, 0.0078125])') for pch in P]
+        Q['DBP32'] = [Q_power(f, Nch, pch, Rs, 'Rx_DBP32DDLMS(taps=32,lr=[0.015625, 0.0078125])') for pch in P]
+    
+    return Q
 
 
 
@@ -253,61 +286,93 @@ class opticDataset(Dataset):
         j = idx % (self.y.shape[1] - self.M + 1)
         return self.y[i, j:j+self.M, :], self.x[i, j + (self.M//2), :], self.task_info[i]  # [M, Nmodes], [Nmodes]
 
+'''
+h5py dataset:
+- pulse
+- SymbTx  
+- SignalRx
+- Rx(sps=2,chid=0,method=frequency cut)
+    - info            # [Pch, Fi, Rs, Nch]
+    - Tx
+    - Rx
+    - Rx_CDC 
+    - Rx_DBP%d
+    - Rx_CDCDDLMS
+    - Rx_DBP%dDDLMS
+    - ...
 
-
+'''
 
 class MyDataset(Dataset):
 
-    def __init__(self, path='dataset/test.h5', Nch=[3], Rs=[40], Pch=[-1], Nmodes=2, window_size=41, strides=1, Nsymb=10000000, transform='Rx_CDCDSP', truncate=20000, Tx_window=False):
+    '''
+    window_size = strides + overlaps
+    overlaps = |start| + |stop|
+    '''
+
+    def __init__(self, path='dataset/test.h5', Nch=[3], Rs=[40], Pch=[-1], Nmodes=2,
+                window_size=41, strides=1, Nwindow=10000000, truncate=20000, Tx_window=False,
+                rx_grp='Rx(sps=2,chid=0,method=frequency cut)', pre_transform='Rx'):
         # dtype: 'signal' or 'tensor'
+        # pre_transform: 'Rx' or 'Rx_CDC' or 'Rx_DBP%d' or 'Rx_CDCDDLMS' or 'Rx_DBP%dDDLMS'
         self.path = path
         self.Nch = Nch if type(Nch) == list else [Nch]
         self.Rs = Rs if type(Rs) == list else [Rs]
         self.Pch = Pch if type(Pch) == list else [Pch]
         self.Nmodes = Nmodes
         self.window_size = window_size
-        self.transform = transform
+        self.pre_transform = pre_transform
         self.strides = strides
         self.truncate = truncate
         self.Tx_window = Tx_window
 
-        self.Tx = []
-        self.Rx = []
-        # self.Rx_CDCDSP = []
-        # self.Rx_CDCDSP_PBC = []
-        self.info = []
+        self.Tx = []        # list of  [L, Nmodes]
+        self.Rx = []        # list of  [L*sps, Nmodes]
+        self.info = []      # list of  [4]
 
         with h5py.File(path, 'r') as f:
             for key in f.keys():
                 group = f[key]
-                if group.attrs['Nch'] in self.Nch and group.attrs['Rs'] in self.Rs and group.attrs['Nmodes'] == Nmodes and group.attrs['Pch'] in self.Pch:
-                    s = group[transform].attrs['start']
-                    e = group[transform].attrs['stop']  + group[transform].shape[1]
-                    sps = group[transform].attrs['sps']
-                    self.Tx.append(torch.from_numpy(group['Tx'][:,truncate + s:e]))
-                    self.Rx.append(torch.from_numpy(group[transform][:, truncate:]))
-                    self.info.append(torch.from_numpy(group['info'][...]))
+                if group.attrs['Nch'] in self.Nch and group.attrs['Rs(GHz)'] in self.Rs and group.attrs['Nmodes'] == Nmodes and group.attrs['Pch(dBm)'] in self.Pch:
+                    s = group[rx_grp][pre_transform].attrs['start']
+                    e = group[rx_grp][pre_transform].attrs['stop']  + group[rx_grp][pre_transform].shape[1]
+                    sps = group[rx_grp][pre_transform].attrs['sps']
+                    self.Tx = self.Tx + [torch.from_numpy(group[rx_grp]['Tx'][i,truncate + s:e]).to(torch.complex64) for i in range(group[rx_grp]['Tx'].shape[0])]
+                    self.Rx = self.Rx + [torch.from_numpy(group[rx_grp][pre_transform][i, truncate*sps:]).to(torch.complex64)  for i in range(group[rx_grp][pre_transform].shape[0])]
+                    self.info = self.info + [torch.from_numpy(group[rx_grp]['info'][i,...]).to(torch.float32)  for i in range(group[rx_grp]['info'].shape[0])]
         
         if self.Tx == []:
             raise ValueError("No such dataset")
 
-        self.Tx = torch.cat(self.Tx, dim=0)
-        self.Rx = torch.cat(self.Rx, dim=0)
-        self.Rx_sps = sps
-        self.info = torch.cat(self.info, dim=0)
-        self.length = min(self.Tx.shape[0] * ((self.Tx.shape[1] - self.window_size)//self.strides + 1), Nsymb)
 
-    
+        self.Rx_sps = sps
+        self.length_list = [(tx.shape[0] - self.window_size)//self.strides + 1 for tx in self.Tx]
+        self.length =  min(sum(self.length_list), Nwindow)
+
+    def locate(self,idx):
+        '''
+        return the index of batch i and the index of window j in the batch.
+        '''
+        i = np.argmax(np.cumsum(self.length_list) > idx)
+        j = int(idx - np.sum(self.length_list[:i]))
+        return i, j
+
     def __len__(self):
         return self.length
 
 
     def __getitem__(self, idx):
-    
-        i = idx // ((self.Tx.shape[1] - self.window_size)//self.strides + 1)
-        j = idx % ((self.Tx.shape[1] - self.window_size)//self.strides + 1)
+        '''
+        Return Rx, Tx, info
+        if Tx_window is True,
+            shape: [window_size*sps, Nmodes], [windowsize, Nmodes], [4]
+        else:
+            shape: [window_size*sps, Nmodes], [Nmodes], [4]
+            info: [Pch(dBm), Fi(Hz), Fs(Hz), Nch]   power per channel, carrier frequency, samplerate, number of channels
+        '''
+        i, j = self.locate(idx)
 
         if self.Tx_window:
-            return self.Rx[i, j*self.strides*self.Rx_sps: (j*self.strides+self.window_size)*self.Rx_sps, :], self.Tx[i, j*self.strides:j*self.strides+self.window_size, :], self.info[i]  # [M, Nmodes], [Nmodes]
+            return self.Rx[i][j*self.strides*self.Rx_sps: (j*self.strides+self.window_size)*self.Rx_sps, :], self.Tx[i][j*self.strides:j*self.strides+self.window_size, :], self.info[i]  # [M, Nmodes], [Nmodes]
         else:
-            return self.Rx[i, j*self.strides*self.Rx_sps: (j*self.strides+self.window_size)*self.Rx_sps, :], self.Tx[i, j*self.strides+(self.window_size//2), :], self.info[i]
+            return self.Rx[i][j*self.strides*self.Rx_sps: (j*self.strides+self.window_size)*self.Rx_sps, :], self.Tx[i][j*self.strides+(self.window_size//2), :], self.info[i]

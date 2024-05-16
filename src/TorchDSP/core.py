@@ -56,7 +56,7 @@ class TorchTime:
         self.start = (self.start + tslice[0]) // stride
         self.stop = (self.stop + tslice[1]) // stride
         self.sps = self.sps // stride
-        return 
+        return self
 
 
 class TorchSignal:

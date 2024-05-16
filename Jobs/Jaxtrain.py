@@ -3,12 +3,12 @@ Jax Model.
 """
 import jax, optax, pickle, jax.random as rd, jax.numpy as jnp, flax.linen as nn, numpy as np, matplotlib.pyplot as plt
 import sys 
-from JaxSimulation.models import CDCBPS,CDCMIMO,DBPMIMO, DBPBPS, BER, piecewise_constant, DBP, mask_signal, mimoaf,downsamp, DBP_transform, wrap_signal, CDC_transform
-from JaxSimulation.initializers import gauss, near_zeros, zeros, delta
-import JaxSimulation.DataLoader as DL
-from JaxSimulation.utils import  get_dtaps
-import JaxSimulation.adaptive_filter as af
-from JaxSimulation.train import Model
+from src.JaxSimulation.models import CDCBPS,CDCMIMO,DBPMIMO, DBPBPS, BER, piecewise_constant, DBP, mask_signal, mimoaf,downsamp, DBP_transform, wrap_signal, CDC_transform
+from src.JaxSimulation.initializers import gauss, near_zeros, zeros, delta
+import src.JaxSimulation.DataLoader as DL
+from src.JaxSimulation.utils import  get_dtaps
+import src.JaxSimulation.adaptive_filter as af
+from src.JaxSimulation.train import Model
 import matplotlib as mpl
 from flax.core import freeze, unfreeze,lift
 mpl.rcParams['axes.prop_cycle'] = mpl.cycler(color=['g',  'b', 'k', 'y', 'm', 'c']) # type: ignore

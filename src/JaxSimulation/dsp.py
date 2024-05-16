@@ -934,7 +934,7 @@ class LDBP(nn.Module):
     Fc: float=299792458/1550E-9   # [Hz]  WDM center freqs
     gamma: float= 0.0016567       # [/W/m]
     @nn.compact
-    def __call__(self, x:MySignal) ->MySignal:
+    def __call__(self, x:MySignal) -> MySignal:
         '''
             (MySignal, float) -> MySignal
             [Nfft, Nmodes] -> [Nsymb - ol, Nmodes]
@@ -1074,7 +1074,7 @@ def init_model(model_info,mode='train', initialization=True, batch_dim=2, update
         return net
 
 
-def construct_update(net:nn.Module, tx: optax.GradientTransformation, device: str='cpu') -> Callable:
+def construct_update(net:nn.Module, tx: optax.GradientTransformation, device: str='cpu', loss_type='logMSE') -> Callable:
     '''
         Input: 
             net: flax module.    net.apply: y,x,update_state -> x_preditcted, new_state
@@ -1097,8 +1097,12 @@ def construct_update(net:nn.Module, tx: optax.GradientTransformation, device: st
         new_state = new_state_dic['state']
         start = x_predict.t.start
         stop = x_predict.t.stop
-        return jnp.log(jnp.mean(jnp.abs(x.val[...,start:stop,:] - x_predict.val)**2)), new_state
-        # return jnp.mean(jnp.abs(x.val[...,start:stop,:] - x_.val)**2), new_state
+        if loss_type=='logMSE':
+            return jnp.log(jnp.mean(jnp.abs(x.val[...,start:stop,:] - x_predict.val)**2)), new_state
+        elif loss_type=='MSE':
+            return jnp.mean(jnp.abs(x.val[...,start:stop,:] - x_predict.val)**2), new_state
+        else:
+            raise ValueError
         # return jnp.mean(jnp.abs(x.val[...,start:stop,:] - x_.val)**2 / jnp.abs(x.val[...,start:stop,:])**2), new_state
 
     @partial(jax.jit, backend=device)
@@ -1183,19 +1187,39 @@ class MetaMIMOCell(nn.Module):
         e_w = d * psi_hat - v
         e_f = d - k
         gw = -1. / ((jnp.abs(u)**2).sum() + 1e-9) * e_w[:, None, None] * u.conj().T[None, ...]
-        # gw = -e_w[:, None, None] * u.conj().T[None, ...]
         gf = -1. / (jnp.abs(v)**2 + 1e-9) * e_f * v.conj()
         # bound the grads of f and s which are less regulated than w,
         # it may stablize this algo. by experience
         gf = jnp.where(jnp.abs(gf) > self.grad_max[0], gf / jnp.abs(gf) * self.grad_max[0], gf)
 
         return (gw, gf), d, k, (e_w, e_f)
+    
+    # def grad(self, theta, inp, i):
+    #     u,x = inp
+    #     w, f = theta
+    #     v = mimo(w, u)
+    #     k = v * f / jnp.abs(f)
+    #     d = jnp.where(self.train(i), x, decision(self.const, k))
+    #     l = jnp.sum(jnp.abs(k - d)**2)
 
+    #     psi_hat = jnp.abs(f)/f 
+    #     e_w = d * psi_hat - v
+    #     e_f = d - k
+        
+    #     grads = jax.grad(self.loss_fn)(theta, u, d)
+    #     gw = grads[0].conj() / ((jnp.abs(u)**2).sum() + 1e-9)
+    #     gf =  grads[1].conj() / (jnp.abs(v)**2 + 1e-9)
+    #     gf = jnp.where(jnp.abs(gf) > self.grad_max[0], gf / jnp.abs(gf) * self.grad_max[0], gf)
 
+    #     return (gw, gf), d, k, (e_w, e_f)
+
+    def loss_fn(self, theta, y, d):
+        w,f = theta
+        return jnp.sum(jnp.abs(mimo(w, y)*f/jnp.abs(f) - d)**2)
 
     def apply_fn(self, theta, yf):
         ws, fs = theta
-        return jax.vmap(mimo)(ws, yf) * fs
+        return jax.vmap(mimo)(ws, yf) * fs 
 
 
 class MetaMIMO(nn.Module):

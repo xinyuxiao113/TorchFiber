@@ -8,7 +8,7 @@ from .initializers import complex_variance_scaling
 from .adaptive_filter import decision
 from .transmitter import QAM
 from typing import Callable, Any
-from .layers import NLayerLSTM, MLP
+from .layers import NLayerLSTM, MLP, NLayerGRU
 
 # concat all items in a pytree       pytree  -> (*,1)
 def flat_pytree(pytree):
@@ -75,13 +75,13 @@ class MetaLSTMOpt_B(nn.Module):
     lstm_width: int=16 
     mlp_width: int=32
     step_max: float = 1e-1
-    lr_features: int = 33
+
 
     def setup(self):
         # control lr in a interval !!
         self.LSTM = NLayerLSTM(dtype=jnp.complex64, param_dtype=jnp.complex64, hidden_dims=[self.lstm_width]*self.lstm_depth)      # state, x -> state, y
         self.linear_in = nn.Sequential([nn.Dense(features=self.lstm_width, dtype=jnp.complex64, param_dtype=jnp.complex64), crelu])
-        self.linear_out = MLP(features=self.lr_features, depth=self.mlp_depth, hidden_dims=self.mlp_width, dtype=jnp.complex64, param_dtype=jnp.complex64)
+        self.linear_out = MLP(features=1, depth=self.mlp_depth, hidden_dims=self.mlp_width, dtype=jnp.complex64, param_dtype=jnp.complex64)
 
     def __call__(self, opt_state, grads, params):
         # step 0: choose info to embed
@@ -90,7 +90,7 @@ class MetaLSTMOpt_B(nn.Module):
         # add_info = jnp.stack(add_in * I.shape[0], axis=0) # (N, 2)
         I = jnp.concatenate([I0, add_info], axis=-1)        # (N, 2)  complex
         I = pre_transform(I)                                # (N, 2)  complex
-        I = self.linear_in(I.reshape(-1))                   # (N, hidden_dim)
+        I = self.linear_in(I)                               # (N, hidden_dim)
         opt_state, output = self.LSTM(opt_state, I)         # opt_state: [(N, hidden_dim)x2]xdepth  output: (N, hidden_dim)
         lr = self.linear_out(output) 
         lr = - complex_sigmoid(lr) * self.step_max          # (N,)            
@@ -119,12 +119,12 @@ class MetaAdamOpt(nn.Module):
         self.eps = self.param('eps', lambda *_: jnp.array(self.eps_init, dtype=jnp.float32))
 
     def __call__(self, opt_state, grads, params):
-        tx = optax.experimental.split_real_and_imaginary(optax.adam(learning_rate=self.lr, b1=self.b1, b2=self.b2, eps=self.eps))
+        tx = optax.contrib.split_real_and_imaginary(optax.adam(learning_rate=self.lr, b1=self.b1, b2=self.b2, eps=self.eps))
         uptdates, opt_state = tx.update(grads, opt_state, params)
         return opt_state, uptdates
     
     def init_carry(self, params):
-        tx = optax.experimental.split_real_and_imaginary(optax.adam(learning_rate=self.learning_rate_init, b1=self.b1_init, b2=self.b2_init, eps=self.eps_init))
+        tx = optax.contrib.split_real_and_imaginary(optax.adam(learning_rate=self.learning_rate_init, b1=self.b1_init, b2=self.b2_init, eps=self.eps_init))
         return tx.init(params)
     
 
@@ -137,12 +137,12 @@ class MetaAdaGradOpt(nn.Module):
         self.initial_accumulator_value = self.param('initial_accumulator_value', lambda *_: jnp.array(self.initial_accumulator_value_init, dtype=jnp.float32))
 
     def __call__(self, opt_state, grads, params):
-        tx = optax.experimental.split_real_and_imaginary(optax.adagrad(learning_rate=self.lr, initial_accumulator_value=self.initial_accumulator_value))
+        tx = optax.contrib.split_real_and_imaginary(optax.adagrad(learning_rate=self.lr, initial_accumulator_value=self.initial_accumulator_value))
         uptdates, opt_state = tx.update(grads, opt_state, params)
         return opt_state, uptdates
     
     def init_carry(self, params):
-        tx = optax.experimental.split_real_and_imaginary(optax.adagrad(learning_rate=self.learning_rate_init, initial_accumulator_value=self.initial_accumulator_value_init))
+        tx = optax.contrib.split_real_and_imaginary(optax.adagrad(learning_rate=self.learning_rate_init, initial_accumulator_value=self.initial_accumulator_value_init))
         return tx.init(params)
     
 
@@ -159,12 +159,12 @@ class MetaRmspropOpt(nn.Module):
         self.momentum = self.param('momentum', lambda *_: jnp.array(self.momentum_init, dtype=jnp.float32))
     
     def __call__(self, opt_state, grads, params):
-        tx = optax.experimental.split_real_and_imaginary(optax.rmsprop(learning_rate=self.lr, decay=self.decay, momentum=self.momentum))
+        tx = optax.contrib.split_real_and_imaginary(optax.rmsprop(learning_rate=self.lr, decay=self.decay, momentum=self.momentum))
         uptdates, opt_state = tx.update(grads, opt_state, params)
         return opt_state, uptdates
     
     def init_carry(self, params):
-        tx = optax.experimental.split_real_and_imaginary(optax.rmsprop(learning_rate=self.learning_rate_init, decay=self.decay_init, momentum=self.momentum_init))
+        tx = optax.contrib.split_real_and_imaginary(optax.rmsprop(learning_rate=self.learning_rate_init, decay=self.decay_init, momentum=self.momentum_init))
         return tx.init(params)
     
 
@@ -178,12 +178,12 @@ class MetaSGDOpt(nn.Module):
         self.momentum = self.param('momentum', lambda *_: jnp.array(self.momentum_init, dtype=jnp.float32))
     
     def __call__(self, opt_state, grads, params):
-        tx = optax.experimental.split_real_and_imaginary(optax.sgd(learning_rate=self.lr, momentum=self.momentum, nesterov=self.nesterov))
+        tx = optax.contrib.split_real_and_imaginary(optax.sgd(learning_rate=self.lr, momentum=self.momentum, nesterov=self.nesterov))
         uptdates, opt_state = tx.update(grads, opt_state, params)
         return opt_state, uptdates
 
     def init_carry(self, params):
-        tx = optax.experimental.split_real_and_imaginary(optax.sgd(learning_rate=self.learning_rate_init, momentum=self.momentum_init, nesterov=self.nesterov))
+        tx = optax.contrib.split_real_and_imaginary(optax.sgd(learning_rate=self.learning_rate_init, momentum=self.momentum_init, nesterov=self.nesterov))
         return tx.init(params)
     
 
@@ -208,3 +208,41 @@ class MetaLr(nn.Module):
 
     def init_carry(self, params):
         return jnp.zeros(1)
+
+
+class MetaGRUOpt(nn.Module):
+    dtype: jnp.dtype = jnp.complex64   # type: ignore
+    hidden_dim: int = 16
+    depth: int = 2
+    learning_rate_init: float = 1e-3
+    step_max: float=5e-2
+
+    def setup(self):
+        self.RNN = NLayerGRU(hidden_dims=[self.hidden_dim,]*self.depth,dtype=self.dtype, param_dtype=self.dtype)
+        self.linear_in = nn.Sequential([nn.Dense(features=self.hidden_dim, kernel_init=complex_variance_scaling, dtype=self.dtype, param_dtype=self.dtype), crelu])
+        self.linear_out = nn.Sequential([nn.Dense(features=1, kernel_init=complex_variance_scaling, dtype=self.dtype, param_dtype=self.dtype)])
+        # self.linear_out = nn.Sequential([nn.Dense(features=self.hidden_dim, kernel_init=complex_variance_scaling, dtype=self.dtype, param_dtype=self.dtype), 
+        #                                  crelu,
+        #                                  nn.Dense(features=1, kernel_init=complex_variance_scaling, dtype=self.dtype, param_dtype=self.dtype)])
+
+    def __call__(self, opt_state, grads, params):
+        # step 0: choose info to embed
+        I0, tree, shapes = flat_pytree(grads)                # (N,1), N = number of parameters.
+        add_info, _, s1 = flat_pytree(params)               # (N,1), N = number of parameters.  assert shapes == s1
+        # add_info = jnp.stack(add_in * I.shape[0], axis=0) # (N,Nmodes)
+        I = jnp.concatenate([I0, add_info], axis=-1)         # (N, Nmodes+1)
+        I = pre_transform(I)                                # (N,1)
+        I = self.linear_in(I)                               # (N, hidden_dim)
+        opt_state, output = self.RNN(opt_state, I)          # hidden: [(N, hidden_dim) ]xdepth  output: (N, hidden_dim)
+        lr =  - complex_sigmoid(self.linear_out(output)) * self.step_max   # (N, 1)
+        grads = lr * I0                                     # (N, 1)
+        grads = unflat_pytree(grads, tree, shapes)          # (taps, Nmodes, Nmodes)
+        return opt_state, grads
+    
+
+    def init_carry(self, params):
+        I, tree, shapes = flat_pytree(params)               # (N,1), N = number of parameters.
+        N = I.shape[0]
+        hidden = [jnp.zeros((N, self.hidden_dim), dtype=self.dtype)] * self.depth
+        return hidden
+    

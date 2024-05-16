@@ -97,6 +97,8 @@ for Nch in args['Nch']:
                 if f'Nmodes{args["Nmodes"]}_Rs{int(Rs/1e9)}_Nch{Nch}_Pch{Pch_dBm}_{args["seed"]}' in hdf.keys():
                     print(f'Nmodes{args["Nmodes"]}_Rs{int(Rs/1e9)}_Nch{Nch}_Pch{Pch_dBm}_{args["seed"]} already exists.')
                     continue
+
+                print(f'Creating Dataset: Nmodes{args["Nmodes"]}_Rs{int(Rs/1e9)}_Nch{Nch}_Pch{Pch_dBm}_{args["seed"]}')
                 file = hdf.create_group(f'Nmodes{args["Nmodes"]}_Rs{int(Rs/1e9)}_Nch{Nch}_Pch{Pch_dBm}_{args["seed"]}')
                 file.attrs.update(attrs)
 

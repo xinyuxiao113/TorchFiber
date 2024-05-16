@@ -13,11 +13,76 @@ from typing import Union
 from scipy import constants as const
 
 from .core import TorchSignal, TorchTime
-from .layers import MLP, ComplexConv1d, Parameter
+from .layers import MLP, ComplexConv1d, Parameter, MLP_func
 from .utils import to_device, detach_tree, Dconv, Nconv, decision, constellation, tree_map
 from .metaopt import MetaLr, MetaNone, MetaLSTMOpt, MetaLSTMtest, MetaLSTMplus, MetaAdam, NLMSOpt, RMSPropOpt, MetaGRUOpt, MetaGRUtest
 
 
+
+def get_omega(Fs:torch.Tensor, Nfft:int) -> torch.Tensor:
+    ''' 
+    Get signal fft angular frequency.
+    Input:
+        Fs: sampling frequency. [Hz]          [batch,]
+        Nfft: number of sampling points.      
+    Output:
+        omega: torch.Tensor [batch, Nfft]
+    '''
+    return 2*torch.pi*Fs[:,None] * torch.fft.fftfreq(Nfft)[None,:].to(Fs.device)  # [batch, Nfft]
+
+def get_beta1(D: float, Fc: float, Fi: float) -> float:
+    '''
+    Calculate beta1.
+    Input:
+        D:[ps/nm/km]    Fc: [Hz]   Fi: [Hz] 
+    Output:
+        beta1:    [s/km]
+    '''
+    beta2 = get_beta2(D, Fc)  # [s^2/km]
+    beta1 = 2*np.pi * (Fi - Fc)*beta2 # [s/km]
+    return beta1
+
+def get_beta2(D, Fc):
+    '''
+    Calculate beta2.
+    Input:
+        D:[ps/nm/km]    Fc: [Hz]
+    Output:
+        beta2:    [ps*s/nm]=[s^2/km]
+    '''
+    c_kms = const.c / 1e3                       # speed of light (vacuum) in km/s
+    lamb  = c_kms / Fc                          # [km]
+    beta2 = -(D*lamb**2)/(2*np.pi*c_kms)        # [ps*s/nm]=[s^2/km]
+    return beta2
+        
+def dispersion_kernel(dz:float, dtaps:int, Fs:Union[torch.Tensor, float, int], beta2:float=-2.1044895291667417e-26, beta1: Union[torch.Tensor, float, int]=torch.zeros(1), domain='time') -> torch.Tensor:
+    ''' 
+    Dispersion kernel in time domain or frequency domain.
+    Input:
+        dz: Dispersion distance.              [m]
+        dtaps: length of kernel.     
+        Fs: Sampling rate of signal.          [Hz]         [batch] or float
+        beta2: 2 order  dispersion coeff.     [s^2/m]
+        beta1: 1 order dispersion coeff.      [s/m]        [batch] or float
+        domain: 'time' or 'freq'
+    Output:
+        h:jnp.array. (dtaps,)
+        h is symmetric: jnp.flip(h) = h.
+    '''
+    if type(Fs) == float or type(Fs) == int:
+        Fs = torch.tensor([Fs])
+    if type(beta1) == float or type(beta1) == int:
+        beta1 = torch.tensor([beta1])
+
+    omega = get_omega(Fs, dtaps)      # (batch, dtaps)
+    kernel = torch.exp(-1j*beta1[:,None]*omega*dz - 1j*(beta2/2)*(omega**2)*dz)  # beta1: (batch,)
+
+    if domain == 'time':
+        return torch.fft.fftshift(torch.fft.ifft(kernel, axis=-1), axis=-1)
+    elif domain == 'freq':
+        return kernel
+    else:
+        raise(ValueError)
 
 class LDBP(nn.Module):
     '''
@@ -34,7 +99,7 @@ class LDBP(nn.Module):
             task_hidden_dim: hidden size used in MetaDBP.
 
         DBP_info example:
-            DBP_info = {'step':5, 'dtaps': 5421,  'ntaps':401, 'type': args.DBP, 'Nmodes':1,
+            DBP_info = {'step':5, 'dtaps': 5421,  'ntaps':401, 'type': args.DBP, 'Nmodes':1, 'share': True,
             'L':2000e3, 'D':16.5, 'Fc':299792458/1550E-9, 'gamma':0.0016567,
             'task_dim':4, 'task_hidden_dim': 100}
 
@@ -54,10 +119,32 @@ class LDBP(nn.Module):
             self.task_mlp = MLP(self.task_dim, self.task_hidden_dim, self.ntaps * self.Nmodes**2)
         elif self.method == 'FDBP':
             self.task_mlp = Parameter(output_size = self.ntaps*self.Nmodes**2)
+        elif self.method == 'NewDBP':
+            self.task_mlp = MLP_func(1, self.task_hidden_dim, self.Nmodes**2)
         else:
             raise(ValueError)
+
         self.gamma = self.DBP_info['gamma']                                                        # [1/W/m]
-        
+        self.overlaps = DBP_info['step'] * ((DBP_info['dtaps'] - 1) + (DBP_info['ntaps'] - 1)) // 2 
+    
+    def get_D_kernel(self, Fi:torch.Tensor, Fs:torch.Tensor):
+        beta2 = get_beta2(self.DBP_info['D'], self.DBP_info['Fc'])/1e3                         # [s^2/m]
+        beta1 = get_beta1(self.DBP_info['D'], self.DBP_info['Fc'], Fi)/1e3                     # [s/m]    (batch,)
+        return dispersion_kernel(-self.dz, self.dtaps, Fs, beta2, beta1, domain='time').to(torch.complex64)
+
+    def get_N_kernel(self, task_info: torch.Tensor):
+        '''
+        task_info: [batch, 4],  [P, Fi, Fs, Nch]  Unit:[dBm, Hz, Hz, 1]
+        '''
+        if self.method == 'NewDBP': 
+            batch = task_info.shape[0]
+            pos_enc = torch.abs(torch.linspace(-1,1, self.ntaps)).to(task_info.device) # [ntaps]
+            expand_pos = pos_enc.expand(batch, self.ntaps).view(batch, self.ntaps, 1)
+            Nkernel = self.task_mlp(expand_pos).permute(0,2,1).reshape(batch, self.Nmodes, self.Nmodes, self.ntaps)  # [batch, Nmodes, Nmodes, ntaps]
+        else:
+            batch = task_info.shape[0]
+            Nkernel = self.task_mlp(task_info).reshape(batch, self.Nmodes, self.Nmodes, self.ntaps)  # [batch, Nmodes, Nmodes, ntaps]
+        return Nkernel
 
     def forward(self, signal: TorchSignal, task_info: torch.Tensor) -> TorchSignal:
         '''
@@ -71,17 +158,13 @@ class LDBP(nn.Module):
         '''
         x = signal.val  # [batch, L*sps, Nmodes]
         t = copy.deepcopy(signal.t)    # [start, stop, sps]
-        batch = x.shape[0]
-        beta2 = self.get_beta2(self.DBP_info['D'], self.DBP_info['Fc'])/1e3                   # [s^2/m]
-        beta1 = self.get_beta1(self.DBP_info['D'], self.DBP_info['Fc'], task_info[:,1])/1e3   # [s/m]    (batch,)
-        Dkernel = self.dispersion_kernel(-self.dz, self.dtaps, task_info[:,2], beta2, beta1, domain='time') # [batch, dtaps]   turn dz to negative.
-        Nkernel = self.task_mlp(task_info).reshape(batch, self.Nmodes, self.Nmodes, self.ntaps)  # [batch, Nmodes, Nmodes, ntaps]
         P = 1e-3*10**(task_info[:,0]/10)/self.Nmodes                                        # [batch,]   [W]
-        
+        Dkernel = self.get_D_kernel(task_info[:,1], task_info[:,2]).to(signal.val.device)   # [batch, dtaps]
+        Nkernel = self.get_N_kernel(task_info)                                                # [batch, Nmodes, Nmodes, ntaps]
 
         for i in range(self.DBP_info['step']):
             # Linear step
-            x = Dconv(x, Dkernel, 1)              # [batch, L*sps - dtaps + 1, Nmodes]
+            x = Dconv(x, Dkernel, stride=1)              # [batch, L*sps - dtaps + 1, Nmodes]
             t.conv1d_t(self.dtaps, stride=1)
 
             # Nonlinear step
@@ -89,69 +172,92 @@ class LDBP(nn.Module):
             t.conv1d_t(self.ntaps, stride=1)
             phi = Nconv(torch.abs(x)**2, Nkernel, 1)  # [batch, L*sps - dtaps - ntaps + 2, Nmodes]   x: [batch, L*sps - dtaps + 1, Nmodes]   Nkernel: [batch, Nmodes, Nmodes, ntaps]
             x = x[:,t.start - start: t.stop - stop + x.shape[1]] * torch.exp(1j*phi * self.gamma * P[:,None,None] * self.dz)   # [batch, L*sps - dtaps + 1, Nmodes] turn dz to negative.
-            
+                
         return TorchSignal(x, t)
 
-    def get_omega(self, Fs:torch.Tensor, Nfft:int) -> torch.Tensor:
-        ''' 
-        Get signal fft angular frequency.
-        Input:
-            Fs: sampling frequency. [Hz]          [batch,]
-            Nfft: number of sampling points.      
-        Output:
-            omega: torch.Tensor [batch, Nfft]
-        '''
-        return 2*torch.pi*Fs[:,None] * torch.fft.fftfreq(Nfft)[None,:].to(Fs.device)  # [batch, Nfft]
 
-    def get_beta1(self, D, Fc, Fi):
-        '''
-        Calculate beta1.
-        Input:
-            D:[ps/nm/km]    Fc: [Hz]   Fi: [Hz] 
-        Output:
-            beta1:    [s/km]
-        '''
-        beta2 = self.get_beta2(D, Fc)  # [s^2/km]
-        beta1 = 2*np.pi * (Fi - Fc)*beta2 # [s/km]
-        return beta1
+class TestDBP(nn.Module):
+    '''
+        DBP with hyper-network.
+        
+        Attributes:
+            DBP_info: a dict of DBP parameters.
+            method: string. 'FDBP' or 'MetaDBP'.
+            dz: DBP step size. [m]
+            dtaps: dispersion kernel size.
+            ntaps: nonlinear filter size.
+            Nmodes: signal polarization modes. 1 or 2.
+            task_dim: task dimension. equal to 4.
+            task_hidden_dim: hidden size used in MetaDBP.
 
-    def get_beta2(self, D, Fc):
-        '''
-        Calculate beta2.
-        Input:
-            D:[ps/nm/km]    Fc: [Hz]
-        Output:
-            beta2:    [ps*s/nm]=[s^2/km]
-        '''
-        c_kms = const.c / 1e3                       # speed of light (vacuum) in km/s
-        lamb  = c_kms / Fc                          # [km]
-        beta2 = -(D*lamb**2)/(2*np.pi*c_kms)        # [ps*s/nm]=[s^2/km]
-        return beta2
+        DBP_info example:
+            DBP_info = {'step':5, 'dtaps': 5421,  'ntaps':401, 'type': args.DBP, 'Nmodes':1, 'share': True,
+            'L':2000e3, 'D':16.5, 'Fc':299792458/1550E-9, 'gamma':0.0016567,
+            'task_dim':4, 'task_hidden_dim': 100}
 
+    '''
+    def __init__(self, Nmodes, step, dtaps, ntaps,  d_share=True, n_share=True, L=2000e3, gamma=0.0016567, D=16.5, Fs=160e9, Fc=299792458/1550E-9, Fi=299792458/1550E-9):
+        super(TestDBP, self).__init__()
+        self.Nmodes = Nmodes
+        self.step = step 
+        self.dtaps = dtaps
+        self.ntaps = ntaps
+        self.d_share = d_share
+        self.n_share = n_share
+        self.dz = L / step   # [m]
+        self.gamma = gamma
+        self.D = D
+        self.Fc = Fc
+        self.Fi = Fi 
+        self.Fs = Fs
+        self.overlaps = step * ((dtaps - 1) + (ntaps - 1)) // 2 
+
+        d_num = 1 if d_share else self.step 
+        n_num = 1 if n_share else self.step
+
+        beta2 = get_beta2(self.D, self.Fc)/1e3                   # [s^2/m]
+        beta1 = get_beta1(self.D, self.Fc, self.Fi)/1e3   # [s/m]    (batch,)
+        Dkernel_init = dispersion_kernel(-self.dz, self.dtaps, Fs, beta2, beta1, domain='time').to(torch.complex64)
+
+        # self.Dkernel = nn.ParameterList([nn.Parameter(Dkernel_init, requires_grad=True) for _ in range(d_num)])                             # [dtaps]
+        self.Dkernel_real = nn.ParameterList([nn.Parameter(Dkernel_init.real, requires_grad=True) for _ in range(d_num)])  
+        self.Dkernel_imag = nn.ParameterList([nn.Parameter(Dkernel_init.imag, requires_grad=True) for _ in range(d_num)])  
+        self.Nkernel = nn.ParameterList([nn.Parameter(torch.zeros(self.Nmodes, self.Nmodes, self.ntaps, dtype=torch.float32)) for _ in range(n_num)])   # [Nmodes, Nmodes, ntaps]
     
-    def dispersion_kernel(self, dz:float, dtaps:int, Fs:torch.Tensor, beta2:float=-2.1044895291667417e-26, beta1: torch.Tensor=torch.zeros(()), domain='time') -> torch.Tensor:
-        ''' 
-        Dispersion kernel in time domain or frequency domain.
-        Input:
-            dz: Dispersion distance.              [m]
-            dtaps: length of kernel.     
-            Fs: Sampling rate of signal.          [Hz]
-            beta2: 2 order  dispersion coeff.     [s^2/m]
-            beta1: 1 order dispersion coeff.      [s/m]
-            domain: 'time' or 'freq'
-        Output:
-            h:jnp.array. (dtaps,)
-            h is symmetric: jnp.flip(h) = h.
+    def forward(self, signal: TorchSignal, task_info: torch.Tensor) -> TorchSignal:
         '''
-        omega = self.get_omega(Fs, dtaps)      # (batch, dtaps)
-        kernel = torch.exp(-1j*beta1[:,None]*omega*dz - 1j*(beta2/2)*(omega**2)*dz)  # beta1: (batch,)
+            Input: 
+                TorchSignal with val shape [B, L, Nmodes].
+                task_info: torch.Tensor with shape [B, 4]. 
+                task_info: [batch, 4],  [P, Fi, Fs, Nch]  Unit:[dBm, Hz, Hz, 1]
 
-        if domain == 'time':
-            return torch.fft.fftshift(torch.fft.ifft(kernel, axis=-1), axis=-1)
-        elif domain == 'freq':
-            return kernel
-        else:
-            raise(ValueError)
+            Output:
+                TorchSignal with val shape [B, L - C, Nmodes], where C = steps*(dtaps - 1 + ntaps - 1).
+        '''
+        x = signal.val  # [batch, L*sps, Nmodes]
+        t = copy.deepcopy(signal.t)    # [start, stop, sps]
+        batch = x.shape[0]
+        
+        P = 1e-3*10**(task_info[:,0]/10)/self.Nmodes             # [W]      [batch,] 
+
+
+        for i in range(self.step):
+
+            # Linear step
+            Dk = self.Dkernel_real[min(i, len(self.Dkernel_real) - 1)].expand(x.shape[0], self.dtaps) + 1j * self.Dkernel_imag[min(i, len(self.Dkernel_imag) - 1)].expand(x.shape[0], self.dtaps)
+            x = Dconv(x, Dk, stride=1)              # [batch, L*sps - dtaps + 1, Nmodes]
+            t.conv1d_t(self.dtaps, stride=1)
+
+            # Nonlinear step
+            start, stop = t.start, t.stop
+            t.conv1d_t(self.ntaps, stride=1)
+            phi = Nconv(torch.abs(x)**2, self.Nkernel[min(i, len(self.Nkernel) - 1)].expand(x.shape[0], self.Nmodes, self.Nmodes, self.ntaps), 1)
+            x = x[:,t.start - start: t.stop - stop + x.shape[1]] * torch.exp(1j*phi * self.gamma * P[:,None,None] * self.dz)   # [batch, L*sps - dtaps + 1, Nmodes] turn dz to negative.
+                
+        return TorchSignal(x, t)
+
+
+
 
 
     
@@ -350,6 +456,10 @@ class ADF(nn.Module):
         self.Cell = ADFCell(method=method,taps=self.taps, Nmodes=Nmodes, mode=mode, lead_symbols=lead_symbols, meta_args=meta_args)
         self.batch_size = batch_size
         self.state = self.Cell.init_carry(batch_size)    # state:{'iter': torch.Size([]), 'theta': (torch.Size([batch, Nmodes, Nmodes, taps]), torch.Size([batch, Nmodes])), 'hidden': (torch.Size([num_layers, N * batch, 2*Co]), torch.Size([nunm_layers, N*batch, 2*Co]))}
+        self.overlaps = (self.taps - 1) // 2
+        # self.theta = nn.ParameterList(state['theta'])
+        # self.state
+
     
     def forward(self, signal: TorchSignal, signal_pilot: TorchSignal, task_info: torch.Tensor, show_lr=False) -> Union[TorchSignal, list]:
         '''
@@ -456,11 +566,12 @@ class downsamp(nn.Module):
     Downsample module.
     A simple replacement of ADF.
     '''
-    def __init__(self, taps=32, Nmodes=1, batch_size=None, sps=2):
+    def __init__(self, taps=32, Nmodes=1, batch_size=None, sps=2, init='zeros'):
         super(downsamp, self).__init__()
         self.taps = taps
         self.Nmodes = Nmodes
-        self.conv = ComplexConv1d(Nmodes, Nmodes, self.taps, stride=sps, padding=0, bias=False)
+        self.conv = ComplexConv1d(Nmodes, Nmodes, self.taps, stride=sps, padding=0, bias=False, init='zeros')
+        self.overlaps = (self.taps - 1) // 2
 
     def forward(self, signal: TorchSignal):
         x = signal.val                     # [batch, L*sps, Nmodes]

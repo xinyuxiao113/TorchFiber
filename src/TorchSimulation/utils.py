@@ -90,6 +90,9 @@ def show_symb(sig,symb,s=10,figsize=(8,4),title='title'):
     '''
     sig,symb: L2 = 1    [Nsymb, Nmodes]
     '''
+    if isinstance(sig, torch.Tensor):
+        sig = sig.detach().cpu().numpy()
+        symb = symb.detach().cpu().numpy()
     Nmodes = sig.shape[-1]
     symb_set = np.unique(symb)
 
@@ -101,3 +104,5 @@ def show_symb(sig,symb,s=10,figsize=(8,4),title='title'):
             
             z = sig[...,p][symb[...,p] == sym]
             ax[p].scatter(z.real, z.imag, s=s)
+    
+    return ax

@@ -25,7 +25,24 @@ from src.TorchSimulation.channel import manakov_ssf, choose_dz, get_beta2
 from src.TorchSimulation.receiver import simpleRx
 from src.TorchDSP.baselines import CDC, DDLMS, DBP
 import warnings
-warnings.filterwarnings('error')
+# warnings.filterwarnings('error')
+import os
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
+import jax
+from functools import partial
+from src.JaxSimulation.dsp import BPS, bps, ddpll, cpr, mimoaf
+import src.JaxSimulation.adaptive_filter as af
+from src.JaxSimulation.core import MySignal, SigTime
+
+@partial(jax.jit, backend='cpu', static_argnums=(2,3,4,5))   
+def DDLMS_jax(Rx, Tx, taps=32, sps=2, lead_symbols=2000, lr=[1/2**6, 1/2**7]):
+    signal = MySignal(val=Rx, t=SigTime(0,0,sps), Fs=0)
+    truth = MySignal(val=Tx, t=SigTime(0,0,1), Fs=0)
+    model = mimoaf(taps=taps, train=lambda n: n<lead_symbols, mimofn=af.ddlms, learnable=False, mimokwargs={'lr_w': lr[0], 'lr_f':lr[1], 'lr_b':0})
+    z, state = model.init_with_output(jax.random.PRNGKey(0), signal, truth, True)
+    return z
+
+
 
 parser = argparse.ArgumentParser(description="Simulation Configuration")
 parser.add_argument('--path',   type=str, default='dataset/test.h5', help='dataset path')
@@ -71,11 +88,15 @@ with h5py.File(args.path,'a') as f:
                 continue
             else:
                 t0 = time.time()
-                F = DDLMS(E.to('cpu'), Tx.to('cpu'), sps=subgrp['Rx'].attrs['sps'], lead_symbols=2000, lr=args.ddlms_lr, taps=args.taps)  # [B, Nfft, Nmodes]
+                # F = DDLMS(E.to('cpu'), Tx.to('cpu'), sps=subgrp['Rx'].attrs['sps'], lead_symbols=2000, lr=args.ddlms_lr, taps=args.taps)  # [B, Nfft, Nmodes]
+                # F_data = F.val.cpu().numpy()
+                sig_in, symb_in = jax.numpy.array(E.to('cpu')), jax.numpy.array(Tx.to('cpu'))
+                F = jax.vmap(DDLMS_jax, in_axes=(0,0,None,None,None,None))(sig_in, symb_in, args.taps, subgrp['Rx'].attrs['sps'], 2000, tuple(args.ddlms_lr))  # [B, Nfft, Nmodes]
+                F_data = torch.tensor(jax.device_get(F.val))
                 t1 = time.time()
                 print(f'DDLMS time: {t1-t0}', flush=True)
 
-                data = subgrp.create_dataset(f'Rx_CDCDDLMS(taps={args.taps},lr={args.ddlms_lr})', data=F.val.cpu().numpy())
+                data = subgrp.create_dataset(f'Rx_CDCDDLMS(taps={args.taps},lr={args.ddlms_lr})', data=F_data)
                 data.dims[0].label = 'batch'
                 data.dims[1].label = 'time'
                 data.dims[2].label = 'modes'
@@ -106,11 +127,15 @@ with h5py.File(args.path,'a') as f:
                 continue
             else:
                 t0 = time.time()
-                F = DDLMS(E.to('cpu'), Tx.to('cpu'), sps=subgrp['Rx'].attrs['sps'], lead_symbols=2000, lr=args.ddlms_lr, taps=args.taps)  # [B, Nfft, Nmodes]
+                # F = DDLMS(E.to('cpu'), Tx.to('cpu'), sps=subgrp['Rx'].attrs['sps'], lead_symbols=2000, lr=args.ddlms_lr, taps=args.taps)  # [B, Nfft, Nmodes]
+                # F_data = F.val.cpu().numpy()
+                sig_in, symb_in = jax.numpy.array(E.to('cpu')), jax.numpy.array(Tx.to('cpu'))
+                F = jax.vmap(DDLMS_jax, in_axes=(0,0,None,None,None,None))(sig_in, symb_in, args.taps, subgrp['Rx'].attrs['sps'], 2000, tuple(args.ddlms_lr))  # [B, Nfft, Nmodes]
+                F_data = torch.tensor(jax.device_get(F.val))
                 t1 = time.time()
                 print(f'DDLMS time: {t1-t0}', flush=True)    
 
-                data = subgrp.create_dataset(f'Rx_DBP{args.stps}DDLMS(taps={args.taps},lr={args.ddlms_lr})', data=F.val.cpu().numpy())
+                data = subgrp.create_dataset(f'Rx_DBP{args.stps}DDLMS(taps={args.taps},lr={args.ddlms_lr})', data=F_data)
                 data.dims[0].label = 'batch'
                 data.dims[1].label = 'time'
                 data.dims[2].label = 'modes'

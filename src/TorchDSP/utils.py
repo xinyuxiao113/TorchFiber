@@ -117,9 +117,11 @@ def VmapConv1d(input, filter, stride):
     return F.conv1d(input, filter, stride=stride, groups=input.shape[0])
 
 
+
 def Dconv(input, filter, stride):
     '''
-        [batch, L, Nmodes] x [batch, k] -> [batch, L - k +1, Nmodes]
+    [batch, L, Nmodes] x [batch, k] -> [batch, L - k +1, Nmodes]
+
 
         output[i,n,m] = sum_{j} input[i, k-1+n-j, m] * filter[i, j]
 
@@ -131,6 +133,7 @@ def Dconv(input, filter, stride):
         Output:
             [batch, L - k +1, Nmodes]
     '''
+
     return torch.vmap(VmapConv1d, in_dims=(-1, None, None), out_dims=-1)(input, torch.flip(filter, dims=(-1,)), stride)
 
 
@@ -214,6 +217,8 @@ def conv_circ(signal: torch.Tensor, ker: torch.Tensor, dim=0) -> torch.Tensor:
         ker: real 1D tensor with shape (N,).
     Output:
         signal conv_N ker.
+
+        
     '''
     ker_shape = [1] * signal.dim()
     ker_shape[dim] = -1

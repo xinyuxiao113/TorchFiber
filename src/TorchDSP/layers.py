@@ -39,19 +39,75 @@ class MLP(nn.Module):
         self.fc2 = nn.Linear(hidden_size, 20)
         self.fc3 = nn.Linear(20, output_size)
 
+
         # 初始化最后一层的权重为零
-        init.zeros_(self.fc3.weight)
+        init.normal_(self.fc3.weight, mean=0, std=2e-2)
         init.zeros_(self.fc3.bias)
         # init.zeros_(self.fc2.bias)
         # init.zeros_(self.fc1.bias)
 
     def forward(self, x):
         # x = F.normalize(x, dim=0, p=2)    # [batch, task_dim]
-        x = x / torch.tensor([1, 1.9e14, 8e10, 10]).to(x.device)
+        if x.shape[-1] == 4:
+            x = x / torch.tensor([1, 1.9e14, 8e10, 10]).to(x.device)
+        elif x.shape[-1] == 5:
+            x = x / torch.tensor([1, 1.9e14, 8e10, 10, 1]).to(x.device)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
         return x
+    
+
+class MLP_func(nn.Module):
+    '''
+    Multi-layer perceptron.
+
+    R^3 -> R^401
+    '''
+    def __init__(self, input_size=4, hidden_size=100, output_size=401):
+        super(MLP_func, self).__init__()
+        self.fc1 = nn.Linear(input_size, 80)
+        self.fc2 = nn.Linear(80, 40)
+        self.fc3 = nn.Linear(40, 2)
+        self.fc4 = nn.Linear(2, output_size, bias=False)
+
+        # 初始化最后一层的权重为零
+        # init.normal_(self.fc2.weight, mean=0, std=1e-1)
+        # init.zeros_(self.fc2.bias)
+        # init.zeros_(self.fc2.bias)
+        # init.zeros_(self.fc1.bias)
+
+    def forward(self, x):
+        x = F.leaky_relu(self.fc1(x))
+        x = F.leaky_relu(self.fc2(x))
+        x = self.fc3(x)
+        x = self.fc4(x)
+        return  0.1 * x
+    
+
+class MLP_meta(nn.Module):
+    '''
+    Multi-layer perceptron.
+
+    R^3 -> R^401
+    '''
+    def __init__(self, input_size=4, hidden_size=100, output_size=401):
+        super(MLP_func, self).__init__()
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, 1)
+        self.fc3 = nn.Linear(1, output_size, bias=False)
+
+        # 初始化最后一层的权重为零
+        # init.normal_(self.fc2.weight, mean=0, std=1e-1)
+        # init.zeros_(self.fc2.bias)
+        # init.zeros_(self.fc2.bias)
+        # init.zeros_(self.fc1.bias)
+
+    def forward(self, x):
+        x = F.leaky_relu(self.fc1(x))
+        x = self.fc2(x)
+        x = self.fc3(x)
+        return  0.1 * x
     
 
 class Parameter(nn.Module):

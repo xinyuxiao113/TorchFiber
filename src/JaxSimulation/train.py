@@ -65,7 +65,7 @@ class Model:
         self.apply = jax.jit(partial(self.net_test.apply, mutable='state'), static_argnums=3, backend=self.test_device)
         
         # step 2: initilize optimizer and update function                                                                     
-        self.optimizer = optax.experimental.split_real_and_imaginary(optax.adam(learning_rate=1e-4) )    # default optimizer: complex adam with lr = 1e-4
+        self.optimizer = optax.contrib.split_real_and_imaginary(optax.adam(learning_rate=1e-4) )    # default optimizer: complex adam with lr = 1e-4
         opt_state_init = self.optimizer.init(params_init)
         self.TS = TrainState(epochs=0, params=params_init, state=state_init, opt_state=opt_state_init,state_init=state_init, l_list=[])
         self.update_step = construct_update(self.net_train, self.optimizer, device=train_device)

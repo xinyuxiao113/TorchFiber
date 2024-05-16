@@ -208,9 +208,14 @@ class NLayerLSTM(nn.Module):
     activation_fn: Callable = ctanh
 
     def setup(self):
-        self.lstm_layers = [nn.LSTMCell(name=f'lstm_{i}', gate_fn=self.gate_fn, activation_fn=self.activation_fn, dtype=self.dtype, param_dtype=self.param_dtype) for i, _ in enumerate(self.hidden_dims)]  # type: ignore
+        # self.lstm_layers = [nn.GRUCell(features=dim, name=f'lstm_{i}', gate_fn=self.gate_fn, activation_fn=self.activation_fn, dtype=self.dtype, param_dtype=self.param_dtype) for i, dim in enumerate(self.hidden_dims)]  # type: ignore
+        self.lstm_layers = [nn.LSTMCell(features=dim, name=f'lstm_{i}', gate_fn=self.gate_fn, activation_fn=self.activation_fn, dtype=self.dtype, param_dtype=self.param_dtype) for i, dim in enumerate(self.hidden_dims)]  # type: ignore
 
     def __call__(self, states, inputs):
+        '''
+        state:
+        inputs: [batch, L, Ci]
+        '''
         new_states = []
 
         layer_output = inputs
@@ -226,6 +231,36 @@ class NLayerLSTM(nn.Module):
             return [(jnp.zeros((hidden_dim,),dtype=dtype), jnp.zeros((hidden_dim,), dtype=dtype)) for hidden_dim in hidden_dims]
         else:
             return [(jnp.zeros((batch_size, hidden_dim),dtype=dtype), jnp.zeros((batch_size, hidden_dim), dtype=dtype)) for hidden_dim in hidden_dims]
+
+
+
+class NLayerGRU(nn.Module):
+    hidden_dims: List[int]
+    dtype: jnp.dtype = jnp.complex64 # type: ignore
+    param_dtype: jnp.dtype = jnp.complex64  # type: ignore
+    gate_fn: Callable = complex_sigmoid
+    activation_fn: Callable = ctanh
+
+    def setup(self):
+        self.lstm_layers = [nn.GRUCell(features=dim, name=f'lstm_{i}', gate_fn=self.gate_fn, activation_fn=self.activation_fn, dtype=self.dtype, param_dtype=self.param_dtype) for i, dim in enumerate(self.hidden_dims)]  # type: ignore
+
+    def __call__(self, states, inputs):
+        new_states = []
+
+        layer_output = inputs
+        for lstm, state in zip(self.lstm_layers, states):
+            new_state, layer_output = lstm(state, layer_output)
+            new_states.append(new_state)
+
+        return new_states, layer_output
+
+    @staticmethod
+    def initialize_carry(hidden_dims,batch_size=None, dtype=jnp.float32):
+        if batch_size == None:
+            return [jnp.zeros((hidden_dim,), dtype=dtype) for hidden_dim in hidden_dims]
+        else:
+            return [jnp.zeros((batch_size, hidden_dim),dtype=dtype) for hidden_dim in hidden_dims]
+
 
 
 
