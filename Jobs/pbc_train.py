@@ -16,3 +16,5 @@ if 'model_path' not in args.keys(): args['model_path'] = _args.config.replace('c
 if 'tensorboard_path' not in args.keys(): args['tensorboard_path'] = _args.config.replace('configs', '_outputs/log_tensorboard').replace('.yaml', '')
 
 train_model(args)
+
+

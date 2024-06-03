@@ -66,20 +66,14 @@ class MLP_func(nn.Module):
     '''
     def __init__(self, input_size=4, hidden_size=100, output_size=401):
         super(MLP_func, self).__init__()
-        self.fc1 = nn.Linear(input_size, 80)
-        self.fc2 = nn.Linear(80, 40)
-        self.fc3 = nn.Linear(40, 2)
+        self.fc1 = nn.Linear(input_size, 200)
+        self.fc2 = nn.Linear(200, 50)
+        self.fc3 = nn.Linear(50, 2)
         self.fc4 = nn.Linear(2, output_size, bias=False)
 
-        # 初始化最后一层的权重为零
-        # init.normal_(self.fc2.weight, mean=0, std=1e-1)
-        # init.zeros_(self.fc2.bias)
-        # init.zeros_(self.fc2.bias)
-        # init.zeros_(self.fc1.bias)
-
     def forward(self, x):
-        x = F.leaky_relu(self.fc1(x))
-        x = F.leaky_relu(self.fc2(x))
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
         x = self.fc3(x)
         x = self.fc4(x)
         return  0.1 * x

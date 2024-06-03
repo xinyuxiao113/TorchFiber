@@ -1,5 +1,5 @@
 """
-Jax Simulation of optical fiber transmission.
+Baselines of optical fiber transmission.  CDC, DBP  + DDLMS
 
 group:
 - pulse
@@ -63,6 +63,11 @@ with h5py.File(args.path,'a') as f:
             raise KeyError(f'{args.rx_grp} not exists in {key}, please run python -m torch_Rx.py to get Rx data.')
         
         subgrp = group[args.rx_grp]
+
+        if group.attrs['Nmodes'] == 2:
+            print('Nmodes=2, continue')
+            continue
+
         Rx = torch.from_numpy(subgrp['Rx'][...]).to(torch.complex64)
         Tx = torch.from_numpy(subgrp['Tx'][...]).to(torch.complex64)
         Fs = torch.tensor([subgrp['Rx'].attrs['Fs(Hz)']]*Rx.shape[0]).to(torch.float32)

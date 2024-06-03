@@ -1,5 +1,5 @@
 """
-Jax Simulation of optical fiber transmission.
+Torch Simulation of optical fiber transmission.
 """
 import argparse,numpy as np,  os, pickle, yaml, torch, time
 from src.TorchSimulation.transmitter import simpleWDMTx,choose_sps

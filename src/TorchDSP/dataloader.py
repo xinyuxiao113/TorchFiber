@@ -334,6 +334,9 @@ class MyDataset(Dataset):
             for key in f.keys():
                 group = f[key]
                 if group.attrs['Nch'] in self.Nch and group.attrs['Rs(GHz)'] in self.Rs and group.attrs['Nmodes'] == Nmodes and group.attrs['Pch(dBm)'] in self.Pch:
+
+                    if pre_transform not in group[rx_grp].keys():
+                        raise ValueError(f"No such pre_transform in {rx_grp}, please choose from {group[rx_grp].keys()}")
                     s = group[rx_grp][pre_transform].attrs['start']
                     e = group[rx_grp][pre_transform].attrs['stop']  + group[rx_grp][pre_transform].shape[1]
                     sps = group[rx_grp][pre_transform].attrs['sps']

@@ -50,7 +50,7 @@ def DDLMS_jax(Rx, Tx, taps=32, sps=2, lead_symbols=2000, lr=[1/2**6, 1/2**7]):
     return z
 
 # Test DBP + ADF
-def Test(net, device='cuda:0', taps=32, Pch=2, Nch=21, Rs=80, test_path='dataset_A800/test.h5', ber_discard=20000, Nsymb=200000):
+def Test(net, device='cuda:0', taps=32, Pch=2, Nch=21, Rs=80, Nmodes=2, test_path='dataset_A800/test.h5', ber_discard=20000, Nsymb=50000, ADF='XPM-ADF'):
     '''
     Test DBP + ADF.
         net: LDBP module.
@@ -68,7 +68,7 @@ def Test(net, device='cuda:0', taps=32, Pch=2, Nch=21, Rs=80, test_path='dataset
     '''
 
     # load data
-    test_data = MyDataset(test_path,  Nch=[Nch], Rs=[Rs], Pch=[Pch], Nmodes=2,
+    test_data = MyDataset(test_path,  Nch=[Nch], Rs=[Rs], Pch=[Pch], Nmodes=Nmodes,
                         window_size=net.overlaps + (taps//2 - 1) + Nsymb, strides=1, Nwindow=1, truncate=0,
                         Tx_window=True, pre_transform='Rx')
     test_loader = DataLoader(test_data, batch_size=1, shuffle=False, drop_last=True)
@@ -99,7 +99,7 @@ def Test(net, device='cuda:0', taps=32, Pch=2, Nch=21, Rs=80, test_path='dataset
 
 
 
-def Train(net: nn.Module, conv: nn.Module, train_loader, optimizer, scheduler, log_path: str, model_path: str, epoch_init: int, epochs:int, test_info={}, save_log=True, save_model=True, save_interval=1, device='cuda:0'):
+def Train(net: nn.Module, conv: nn.Module, train_loader, optimizer, scheduler, log_path: str, model_path: str, epoch_init: int, epochs:int, test_info={}, save_log=True, save_model=True, save_interval=1, device='cuda:0', model_info=None):
     '''
     Train DBP + ADF.
         net: LDBP module.
@@ -158,7 +158,7 @@ def Train(net: nn.Module, conv: nn.Module, train_loader, optimizer, scheduler, l
 
         if epoch % save_interval == 0 and save_model:
             ckpt = {
-                'dbp_info': net.DBP_info,
+                'dbp_info': model_info,
                 'dbp_param': net.state_dict(),
                 'conv_param': conv.state_dict(),
                 'optimizer': optimizer.state_dict(),
@@ -169,3 +169,5 @@ def Train(net: nn.Module, conv: nn.Module, train_loader, optimizer, scheduler, l
             torch.save(ckpt, model_path + f'/{epoch}.pth')
             print('Model saved')
     print('Training Finished')
+
+    return writer

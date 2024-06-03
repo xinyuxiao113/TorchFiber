@@ -1,5 +1,5 @@
 """
-Jax Simulation of optical fiber transmission.
+Torch Simulation of optical fiber transmission. split channel data from simulation signal.
 
 group:
 - pulse
@@ -67,8 +67,9 @@ with h5py.File(args.path,'a') as f:
         data.dims[1].label = 'time'
         data.dims[2].label = 'modes'
         data.attrs.update({'sps':args.rx_sps, 'start': 0, 'stop': 0, 'Fs(Hz)': group.attrs['Rs(GHz)']*1e9 * args.rx_sps,})
-
-        info = torch.tensor([group.attrs['Pch(dBm)'], group.attrs['Fc(Hz)'] + args.rx_chid*group.attrs['freqspace(Hz)'],  group.attrs['Rs(GHz)']*1e9 * args.rx_sps, Nch//2 + args.rx_chid])
+        
+        # [Pch, Fi, Rs, Nch]
+        info = torch.tensor([group.attrs['Pch(dBm)'], group.attrs['Fc(Hz)'] + args.rx_chid*group.attrs['freqspace(Hz)'],  group.attrs['Rs(GHz)']*1e9 * args.rx_sps,  group.attrs['Nch']])
         info = info.repeat(rx_data['signal'].shape[0], 1)
         data = subgrp.create_dataset('info', data=info.cpu().numpy())
         data.dims[0].label = 'batch'

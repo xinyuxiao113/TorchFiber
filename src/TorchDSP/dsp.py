@@ -11,6 +11,7 @@ import torch, copy, numpy as np, matplotlib.pyplot as plt
 import torch.nn.functional as F, torch.nn.init as init, torch.nn as nn
 from typing import Union
 from scipy import constants as const
+import scipy.special
 
 from .core import TorchSignal, TorchTime
 from .layers import MLP, ComplexConv1d, Parameter, MLP_func
@@ -127,22 +128,43 @@ class LDBP(nn.Module):
         self.gamma = self.DBP_info['gamma']                                                        # [1/W/m]
         self.overlaps = DBP_info['step'] * ((DBP_info['dtaps'] - 1) + (DBP_info['ntaps'] - 1)) // 2 
     
+    def set_ntaps(self, ntaps:int):
+        '''
+        Set ntaps of LDBP.
+        '''
+        self.ntaps = ntaps
+        self.overlaps = self.DBP_info['step'] * ((self.DBP_info['dtaps'] - 1) + (self.ntaps - 1)) // 2
+    
     def get_D_kernel(self, Fi:torch.Tensor, Fs:torch.Tensor):
         beta2 = get_beta2(self.DBP_info['D'], self.DBP_info['Fc'])/1e3                         # [s^2/m]
         beta1 = get_beta1(self.DBP_info['D'], self.DBP_info['Fc'], Fi)/1e3                     # [s/m]    (batch,)
         return dispersion_kernel(-self.dz, self.dtaps, Fs, beta2, beta1, domain='time').to(torch.complex64)
 
+    def get_pos_enc(self, task_info: torch.Tensor, taps: int):
+        '''
+        task_info: [batch, 4],  [P, Fi, Fs, Nch]  Unit:[dBm, Hz, Hz, 1]
+        '''
+        scale = 1/200
+        batch = task_info.shape[0]
+        Fs = task_info[:,2] / 160e9
+        Ts = 1/Fs              
+        Ts = Ts.view(batch, 1, 1).expand(batch, taps, 1)                       # [batch, taps, 1]
+        pos_enc = torch.abs(torch.arange(-(taps//2), taps//2+1)).to(task_info.device)   # [ntaps]
+        expand_pos = pos_enc.expand(batch, taps).view(batch,  taps, 1)*scale         # [batch,  taps, 1]
+        return expand_pos, Ts
+
+
     def get_N_kernel(self, task_info: torch.Tensor):
         '''
         task_info: [batch, 4],  [P, Fi, Fs, Nch]  Unit:[dBm, Hz, Hz, 1]
         '''
+        batch = task_info.shape[0]
+
         if self.method == 'NewDBP': 
-            batch = task_info.shape[0]
-            pos_enc = torch.abs(torch.linspace(-1,1, self.ntaps)).to(task_info.device) # [ntaps]
-            expand_pos = pos_enc.expand(batch, self.ntaps).view(batch, self.ntaps, 1)
-            Nkernel = self.task_mlp(expand_pos).permute(0,2,1).reshape(batch, self.Nmodes, self.Nmodes, self.ntaps)  # [batch, Nmodes, Nmodes, ntaps]
+            pos_enc, Ts = self.get_pos_enc(task_info, self.ntaps)  # [batch, ntaps, 1], [batch, ntaps, 1]
+            k1 = Ts**2 * self.task_mlp(pos_enc * Ts**2) * torch.exp(-pos_enc * Ts**2)       # [batch, ntaps, Nmodes**2]
+            Nkernel = k1.permute(0,2,1).reshape(batch, self.Nmodes, self.Nmodes, self.ntaps)  # [batch, Nmodes, Nmodes, ntaps]
         else:
-            batch = task_info.shape[0]
             Nkernel = self.task_mlp(task_info).reshape(batch, self.Nmodes, self.Nmodes, self.ntaps)  # [batch, Nmodes, Nmodes, ntaps]
         return Nkernel
 
@@ -160,7 +182,7 @@ class LDBP(nn.Module):
         t = copy.deepcopy(signal.t)    # [start, stop, sps]
         P = 1e-3*10**(task_info[:,0]/10)/self.Nmodes                                        # [batch,]   [W]
         Dkernel = self.get_D_kernel(task_info[:,1], task_info[:,2]).to(signal.val.device)   # [batch, dtaps]
-        Nkernel = self.get_N_kernel(task_info)                                                # [batch, Nmodes, Nmodes, ntaps]
+        Nkernel = self.get_N_kernel(task_info)                                  # [batch, Nmodes, Nmodes, ntaps]
 
         for i in range(self.DBP_info['step']):
             # Linear step

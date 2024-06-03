@@ -1,5 +1,5 @@
 """
-Test MetaDSP Model.
+Test MetaDSP Model. Old version.
 """
 import torch, matplotlib.pyplot as plt, time, pickle
 import argparse
