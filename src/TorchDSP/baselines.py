@@ -63,6 +63,7 @@ def LinOp(E: torch.Tensor, z:float, dz: float, Fs: torch.Tensor,  beta2: float =
         E: E.val  [Nfft,Nmodes] or [batch, Nfft,Nmodes]
         z: operator start position.  [m]
         dz: operator distance.      [m]
+        Fs: samplerate, [Hz].  
         dtaps: kernel shape.
     Output:
         E: E.val [Nfft, Nmodes]
@@ -71,6 +72,9 @@ def LinOp(E: torch.Tensor, z:float, dz: float, Fs: torch.Tensor,  beta2: float =
     kernel = dispersion_kernel(dz, Nfft, Fs, beta2, beta1, domain='freq')    # [batch, Nfft]
     kernel = kernel[...,None]       # [batch, Nfft, 1]
     x = ifft(fft(E, dim=-2) * kernel, dim=-2)
+
+    if E.ndim == 2:
+        x = x.squeeze(0)
     return x
 
 
@@ -129,7 +133,7 @@ def CDC(E: torch.Tensor, Fs: torch.Tensor, length: float,  beta2: float = -2.104
         CD compensatoin.
     Input:
         E: digital signal.   [batch, Nfft,Nmodes]
-        Fs: samplerate, [Hz]
+        Fs: samplerate. [Hz]   [batch,]
         length >0, dz > 0: [m]
         beta2: 2 order  dispersion coeff.     [s^2/m]
         beta1: 1 order dispersion coeff.      [s/m]
@@ -142,8 +146,8 @@ def DBP(E: torch.Tensor, length: float, dz: float, Fs:torch.Tensor, power_dbm: t
     '''
         Digital back propagation.
     Input:
-        E: digital signal.  [Nfft,Nmodes] or [batch, Nfft,Nmodes]
-        Fs: samplerate, [Hz]
+        E: digital signal.          [Nfft,Nmodes] or [batch, Nfft,Nmodes]
+        Fs: samplerate, [Hz]            [1]       or [batch, 1]
         length >0, dz > 0: [m]
         dz: step size. [m]
         beta2: 2 order  dispersion coeff.     [s^2/m]

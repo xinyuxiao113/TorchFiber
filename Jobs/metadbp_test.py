@@ -23,8 +23,8 @@ parser.add_argument('--config', type=str, default='configs/metadsp/metadbp.yaml'
 parser.add_argument('--job_name', type=str, default='test', help='job name')
 args = parser.parse_args()
 
-log_path = '_outputs/log_tensorboard/train_dbp/' + args.job_name
-model_path = '_models/train_dbp/' + args.job_name
+log_path = '_outputs/log_tensorboard/A_MetaDSP_R1/' + args.job_name
+model_path = '_models/A_MetaDSP_R1/' + args.job_name
 writer = SummaryWriter(log_path)
 
 with open(args.config) as f:
@@ -51,4 +51,3 @@ train_loader = DataLoader(train_data, batch_size=10, shuffle=True, drop_last=Tru
 print(len(train_loader))
 
 writer = Train(net, conv, train_loader, optimizer, scheduler, log_path, model_path, epoch_init=0, epochs=cfg['epochs'], test_info=cfg['test_info'], save_log=True, save_model=True, save_interval=1, device=cfg['device'], model_info=cfg['model_info']['DBP_info'])
-

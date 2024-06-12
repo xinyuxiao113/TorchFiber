@@ -66,8 +66,8 @@ class MLP_func(nn.Module):
     '''
     def __init__(self, input_size=4, hidden_size=100, output_size=401):
         super(MLP_func, self).__init__()
-        self.fc1 = nn.Linear(input_size, 200)
-        self.fc2 = nn.Linear(200, 50)
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, 50)
         self.fc3 = nn.Linear(50, 2)
         self.fc4 = nn.Linear(2, output_size, bias=False)
 
